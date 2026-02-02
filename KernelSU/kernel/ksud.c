@@ -98,16 +98,22 @@ void on_post_fs_data(void)
 	}
 	already_post_fs_data = true;
 	pr_info("on_post_fs_data!\n");
+	
+	pr_info("Loading allowlist...\n");  // ADD
 	ksu_load_allow_list();
+	pr_info("Allowlist loaded\n");      // ADD
+	
 #if defined(CONFIG_KSU_SYSCALL_HOOK) || defined(CONFIG_KSU_SUSFS) ||          \
 	(LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0) &&                      \
 	 defined(CONFIG_KSU_MANUAL_HOOK))
+	pr_info("Starting observer init...\n");  // ADD
 	ksu_observer_init();
+	pr_info("Observer init complete\n");     // ADD
 #endif
 	stop_input_hook();
 
-	// End of boot state
 	is_boot_phase = false;
+	pr_info("post-fs-data complete!\n");  // ADD
 }
 
 extern void ext4_unregister_sysfs(struct super_block *sb);

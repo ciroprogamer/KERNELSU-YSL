@@ -127,6 +127,37 @@ unsigned long totalram_pages __read_mostly;
 unsigned long totalreserve_pages __read_mostly;
 unsigned long totalcma_pages __read_mostly;
 
+
+/*
+ * Allocation size limits to prevent abuse and system instability
+ * Default: 8MB for normal allocations, 64MB for DMA
+ */
+#define DEFAULT_MAX_ALLOC_ORDER 13  /* 8MB on 4K pages (2^11 * 4096 = 8MB) */
+#define DEFAULT_DMA_MAX_ALLOC_ORDER 15  /* 64MB for DMA/CMA */
+
+/* Maximum order allowed for normal allocations */
+static unsigned int max_alloc_order __read_mostly = DEFAULT_MAX_ALLOC_ORDER;
+
+/* Maximum order allowed for DMA allocations */
+static unsigned int dma_max_alloc_order __read_mostly = DEFAULT_DMA_MAX_ALLOC_ORDER;
+
+/* Percentage of available memory allowed per allocation (default 5%) */
+static unsigned int max_alloc_percent __read_mostly = 10;
+
+/* Enable dynamic limit based on available memory */
+static bool dynamic_alloc_limit __read_mostly = false;
+
+/* Rate limit for allocation abuse warnings */
+static DEFINE_RATELIMIT_STATE(alloc_limit_rs, 5 * HZ, 3);
+
+/* Statistics */
+static atomic_long_t blocked_allocs = ATOMIC_LONG_INIT(0);
+static atomic_long_t clamped_allocs = ATOMIC_LONG_INIT(0);
+
+/* Forward declaration */
+static unsigned int calculate_safe_order(unsigned int requested_order, 
+                                        gfp_t gfp_mask, bool *was_clamped); 
+
 int percpu_pagelist_fraction;
 gfp_t gfp_allowed_mask __read_mostly = GFP_BOOT_MASK;
 
@@ -3113,6 +3144,126 @@ static inline bool should_suppress_show_mem(void)
 	return ret;
 }
 
+/*
+ * Calculate a safe allocation order based on available memory and limits
+ * This implements a dual-limit approach:
+ * 1. Absolute maximum (max_alloc_order or dma_max_alloc_order)
+ * 2. Dynamic limit based on available memory (if enabled)
+ */
+static unsigned int calculate_safe_order(unsigned int requested_order,
+                                        gfp_t gfp_mask, bool *was_clamped)
+{
+	unsigned long available_pages;
+	unsigned long requested_pages;
+	unsigned long safe_pages;
+	unsigned int safe_order;
+	unsigned int absolute_max_order;
+	bool is_dma;
+	
+	*was_clamped = false;
+	
+	/* Determine if this is a DMA allocation */
+	is_dma = !!(gfp_mask & (__GFP_DMA | __GFP_DMA32));
+	
+	/* Set absolute maximum based on allocation type */
+	absolute_max_order = is_dma ? dma_max_alloc_order : max_alloc_order;
+	
+	/* Quick check against absolute maximum */
+	if (requested_order > absolute_max_order) {
+		*was_clamped = true;
+		atomic_long_inc(&clamped_allocs);
+		
+		if (__ratelimit(&alloc_limit_rs)) {
+			pr_warn("ALLOC_LIMIT: Clamped order-%u (%lu MB) to order-%u (%lu MB) [absolute limit]\n",
+			        requested_order, 
+			        (PAGE_SIZE << requested_order) >> 20,
+			        absolute_max_order,
+			        (PAGE_SIZE << absolute_max_order) >> 20);
+			pr_warn("  Process: %s (pid %d)\n", current->comm, current->pid);
+			dump_stack();
+		}
+		
+		return absolute_max_order;
+	}
+	
+	/* If dynamic limiting is disabled, just use absolute max */
+	if (!dynamic_alloc_limit)
+		return requested_order;
+	
+	/* Calculate dynamic limit based on available memory */
+	available_pages = global_page_state(NR_FREE_PAGES);
+	requested_pages = 1UL << requested_order;
+	
+	/* Safe allocation = max_alloc_percent of available memory */
+	safe_pages = (available_pages * max_alloc_percent) / 100;
+	
+	/* DMA allocations can use more (double the percentage) */
+	if (is_dma)
+		safe_pages = min(safe_pages * 2, 1UL << absolute_max_order);
+	
+	/* Ensure we don't exceed absolute maximum */
+	safe_pages = min(safe_pages, 1UL << absolute_max_order);
+	
+	/* If requested is within safe limits, allow it */
+	if (requested_pages <= safe_pages)
+		return requested_order;
+	
+	/* Calculate safe order */
+	safe_order = min_t(unsigned int, get_order(safe_pages << PAGE_SHIFT), 
+	                   absolute_max_order);
+	
+	*was_clamped = true;
+	atomic_long_inc(&clamped_allocs);
+	
+	if (__ratelimit(&alloc_limit_rs)) {
+		pr_warn("ALLOC_LIMIT: Clamped order-%u (%lu MB) to order-%u (%lu MB) [dynamic limit]\n",
+		        requested_order,
+		        (PAGE_SIZE << requested_order) >> 20,
+		        safe_order,
+		        (PAGE_SIZE << safe_order) >> 20);
+		pr_warn("  Available: %lu MB, allowed: %u%%, Process: %s (pid %d)\n",
+		        (available_pages << PAGE_SHIFT) >> 20,
+		        max_alloc_percent, current->comm, current->pid);
+	}
+	
+	return safe_order;
+}
+
+/*
+ * Check if allocation should be blocked entirely
+ * Returns true if allocation should be blocked
+ */
+static inline bool should_block_alloc(unsigned int order, gfp_t gfp_mask)
+{
+	unsigned int max_order;
+	
+	/* Allow allocations from critical contexts (e.g., PF_MEMALLOC) */
+	if (current->flags & PF_MEMALLOC)
+		return false;
+	
+	/* Determine maximum based on DMA flag */
+	max_order = (gfp_mask & (__GFP_DMA | __GFP_DMA32)) ? 
+	            dma_max_alloc_order : max_alloc_order;
+	
+	/* Block if significantly over limit (2x the max) */
+	if (order > (max_order + 1)) {
+		atomic_long_inc(&blocked_allocs);
+		
+		if (__ratelimit(&alloc_limit_rs)) {
+			pr_err("ALLOC_BLOCK: Blocked excessive order-%u allocation (%lu MB)\n",
+			       order, (PAGE_SIZE << order) >> 20);
+			pr_err("  Maximum allowed: order-%u (%lu MB)\n",
+			       max_order, (PAGE_SIZE << max_order) >> 20);
+			pr_err("  Process: %s (pid %d)\n", current->comm, current->pid);
+			dump_stack();
+		}
+		
+		return true;
+	}
+	
+	return false;
+}
+
 static void warn_alloc_show_mem(gfp_t gfp_mask)
 {
 	unsigned int filter = SHOW_MEM_FILTER_NODES;
@@ -3925,6 +4076,8 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 			struct zonelist *zonelist, nodemask_t *nodemask)
 {
 	struct page *page;
+	unsigned int original_order = order;
+	bool was_clamped = false;
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
 	gfp_t alloc_mask = gfp_mask; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = {
@@ -3933,6 +4086,17 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 		.nodemask = nodemask,
 		.migratetype = gfpflags_to_migratetype(gfp_mask),
 	};
+
+	/* Check and potentially clamp allocation size */
+	if (should_block_alloc(order, gfp_mask))
+		return NULL;
+	
+	order = calculate_safe_order(order, gfp_mask, &was_clamped);
+	
+	/* Update migratetype if order changed */
+	if (was_clamped)
+		ac.migratetype = gfpflags_to_migratetype(gfp_mask);
+
 
 	if (cpusets_enabled()) {
 		alloc_mask |= __GFP_HARDWALL;
@@ -7054,6 +7218,79 @@ int sysctl_min_slab_ratio_sysctl_handler(struct ctl_table *table, int write,
 #endif
 
 /*
+ * Sysctl handlers for allocation limits
+ */
+static int max_alloc_order_sysctl_handler(struct ctl_table *table, int write,
+                                         void __user *buffer, size_t *length,
+                                         loff_t *ppos)
+{
+	int ret;
+	unsigned int old_value = max_alloc_order;
+	
+	ret = proc_dointvec_minmax(table, write, buffer, length, ppos);
+	
+	if (ret == 0 && write) {
+		/* Sanity check: don't allow order > MAX_ORDER */
+		if (max_alloc_order >= MAX_ORDER) {
+			max_alloc_order = MAX_ORDER - 1;
+		}
+		
+		pr_info("max_alloc_order changed from %u to %u (%lu MB max)\n",
+		        old_value, max_alloc_order, 
+		        (PAGE_SIZE << max_alloc_order) >> 20);
+	}
+	
+	return ret;
+}
+
+static int alloc_limit_stats_handler(struct ctl_table *table, int write,
+                                    void __user *buffer, size_t *length,
+                                    loff_t *ppos)
+{
+	char buf[256];
+	int len;
+	
+	if (write)
+		return -EINVAL;
+	
+	len = snprintf(buf, sizeof(buf),
+	              "Blocked allocations: %ld\n"
+	              "Clamped allocations: %ld\n"
+	              "Current limits:\n"
+	              "  Normal: order-%u (%lu MB)\n"
+	              "  DMA:    order-%u (%lu MB)\n"
+	              "  Dynamic percent: %u%%\n"
+	              "  Dynamic enabled: %s\n",
+	              atomic_long_read(&blocked_allocs),
+	              atomic_long_read(&clamped_allocs),
+	              max_alloc_order, (PAGE_SIZE << max_alloc_order) >> 20,
+	              dma_max_alloc_order, (PAGE_SIZE << dma_max_alloc_order) >> 20,
+	              max_alloc_percent,
+	              dynamic_alloc_limit ? "yes" : "no");
+	
+	return simple_read_from_buffer(buffer, *length, ppos, buf, len);
+}
+
+static struct ctl_table alloc_limit_table[] = {
+	{
+		.procname	= "max_alloc_order",
+		.data		= &max_alloc_order,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= max_alloc_order_sysctl_handler,
+	},
+	{
+		.procname	= "alloc_limit_stats",
+		.data		= NULL,
+		.maxlen		= 0,
+		.mode		= 0444,
+		.proc_handler	= alloc_limit_stats_handler,
+	},
+	{ }
+};
+
+
+/*
  * lowmem_reserve_ratio_sysctl_handler - just a wrapper around
  *	proc_dointvec() so that we can call setup_per_zone_lowmem_reserve()
  *	whenever sysctl_lowmem_reserve_ratio changes.
@@ -7424,11 +7661,22 @@ int alloc_contig_range(unsigned long start, unsigned long end,
 	unsigned long outer_start, outer_end;
 	unsigned int order;
 	int ret = 0;
+	struct page *start_page;
+	struct zone *zone;
+
+	/* Validate PFN and get zone */
+	if (!pfn_valid(start))
+		return -EINVAL;
+	
+	start_page = pfn_to_page(start);
+	zone = page_zone(start_page);
+	if (!zone)
+		return -EINVAL;
 
 	struct compact_control cc = {
 		.nr_migratepages = 0,
 		.order = -1,
-		.zone = page_zone(pfn_to_page(start)),
+		.zone = zone,
 		.mode = MIGRATE_SYNC,
 		.ignore_skip_hint = true,
 	};

@@ -1,6 +1,8 @@
 #include <linux/uaccess.h>
 #include <linux/types.h>
 #include <linux/version.h>
+#include <linux/jiffies.h>
+#include <linux/atomic.h>
 
 #include "../klog.h" // IWYU pragma: keep
 #include "selinux.h"
@@ -14,6 +16,13 @@
 #endif
 
 #define ALL NULL
+
+// Timeout and rate limiting for sepolicy operations
+static atomic_t sepolicy_in_progress = ATOMIC_INIT(0);
+static unsigned long sepolicy_start_time = 0;
+static unsigned long sepolicy_last_reset = 0;
+#define SEPOLICY_TIMEOUT_MS 5000     // 5 second timeout per operation
+#define SEPOLICY_RESET_INTERVAL_MS 500  // Don't reset AVC cache more than once per 500ms
 
 static struct policydb *get_policydb(void)
 {
@@ -59,6 +68,15 @@ void apply_kernelsu_rules()
 	ksu_allow(db, KERNEL_SU_DOMAIN, KERNEL_SU_FILE, ALL, ALL);
 	ksu_allow(db, "init", KERNEL_SU_FILE, ALL, ALL);
 	ksu_allow(db, "zygote", KERNEL_SU_FILE, ALL, ALL);
+
+	// Init needs to execute ksud from adb_data_file location
+	ksu_allow(db, "init", "adb_data_file", "file", "read");
+	ksu_allow(db, "init", "adb_data_file", "file", "open");
+	ksu_allow(db, "init", "adb_data_file", "file", "execute");
+	ksu_allow(db, "init", "adb_data_file", "file", "execute_no_trans");
+	ksu_allow(db, "init", "adb_data_file", "file", "getattr");
+	ksu_allow(db, "init", "adb_data_file", "dir", "search");
+	ksu_allow(db, "init", "adb_data_file", "dir", "read");
 	
 	// Zygote permissions for Zygisk - using stock types only
 	ksu_allow(db, "zygote", "adb_data_file", "dir", "search");
@@ -162,6 +180,25 @@ void apply_kernelsu_rules()
 	ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "getpgid");
 	ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "sigkill");
 
+	// Make su domain omnipotent - full root powers
+	ksu_permissive(db, "su");
+	ksu_allow(db, "su", ALL, ALL, ALL);
+	
+	// Extended ioctl permissions for su
+	if (db->policyvers >= POLICYDB_VERSION_XPERMS_IOCTL) {
+	    ksu_allowxperm(db, "su", ALL, "blk_file", ALL);
+	    ksu_allowxperm(db, "su", ALL, "fifo_file", ALL);
+	    ksu_allowxperm(db, "su", ALL, "chr_file", ALL);
+	    ksu_allowxperm(db, "su", ALL, "file", ALL);
+	}
+	
+	// Allow everyone to interact with su domain
+	ksu_allow(db, ALL, "su", "fd", "use");
+	ksu_allow(db, ALL, "su", "fifo_file", ALL);
+	ksu_allow(db, ALL, "su", "file", ALL);
+	ksu_allow(db, ALL, "su", "process", ALL);
+	ksu_allow(db, ALL, "su", "binder", ALL);
+
 #ifdef CONFIG_KSU_SUSFS
 	susfs_set_priv_app_sid();
 	susfs_set_init_sid();
@@ -239,29 +276,50 @@ static void reset_avc_cache(void)
 int handle_sepolicy(unsigned long arg3, void __user *arg4)
 {
 	struct policydb *db;
-
-	if (!arg4) {
-		return -EINVAL;
-	}
-
-	if (!getenforce()) {
-		pr_info("SELinux permissive or disabled when handle policy!\n");
-	}
-
 	struct sepol_data data;
-	if (copy_from_user(&data, arg4, sizeof(struct sepol_data))) {
-		pr_err("sepol: copy sepol_data failed.\n");
-		return -EINVAL;
+	int ret = -EINVAL;
+	unsigned long elapsed_ms;
+	bool need_avc_reset = false;
+	u32 cmd, subcmd;
+
+	// Atomic test-and-set for concurrency protection
+	// This prevents the race condition between read and set
+	if (atomic_cmpxchg(&sepolicy_in_progress, 0, 1) != 0) {
+		// Someone else is already running, check if timeout
+		elapsed_ms = jiffies_to_msecs(jiffies - sepolicy_start_time);
+		if (elapsed_ms > SEPOLICY_TIMEOUT_MS) {
+			pr_err("sepolicy: TIMEOUT detected (hung for %lu ms), forcing reset\n", 
+			       elapsed_ms);
+			// Force reset and try to claim the lock
+			atomic_set(&sepolicy_in_progress, 0);
+			if (atomic_cmpxchg(&sepolicy_in_progress, 0, 1) != 0) {
+				// Still couldn't get it, someone else grabbed it
+				pr_warn("sepolicy: still busy after timeout reset\n");
+				return -EBUSY;
+			}
+		} else {
+			pr_warn("sepolicy: another operation in progress (running for %lu ms)\n",
+			        elapsed_ms);
+			return -EBUSY;
+		}
 	}
 
-	u32 cmd = data.cmd;
-	u32 subcmd = data.subcmd;
+	// Successfully claimed the lock, record start time
+	sepolicy_start_time = jiffies;
+
+	if (copy_from_user(&data, arg4, sizeof(data))) {
+		pr_err("sepolicy: copy_from_user failed\n");
+		ret = -EFAULT;
+		goto cleanup;
+	}
+
+	cmd = data.cmd;
+	subcmd = data.subcmd;
 
 	mutex_lock(&ksu_rules);
 
 	db = get_policydb();
 
-	int ret = -EINVAL;
 	switch (cmd) {
 	case CMD_NORMAL_PERM: {
 		char src_buf[MAX_SEPOL_LEN];
@@ -306,8 +364,17 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 			success = ksu_dontaudit(db, s, t, c, p);
 		} else {
 			pr_err("sepol: unknown subcmd: %d\n", subcmd);
+			ret = -EINVAL;
+			goto exit;
 		}
-		ret = success ? 0 : -EINVAL;
+		
+		if (success) {
+			ret = 0;
+			need_avc_reset = true;  // Only reset on success
+		} else {
+			pr_err("sepol: CMD_NORMAL_PERM failed for subcmd %d\n", subcmd);
+			ret = -EINVAL;
+		}
 		break;
 	}
 	case CMD_XPERM: {
@@ -355,8 +422,17 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 			success = ksu_dontauditxperm(db, s, t, c, perm_set);
 		} else {
 			pr_err("sepol: unknown subcmd: %d\n", subcmd);
+			ret = -EINVAL;
+			goto exit;
 		}
-		ret = success ? 0 : -EINVAL;
+		
+		if (success) {
+			ret = 0;
+			need_avc_reset = true;  // Only reset on success
+		} else {
+			pr_err("sepol: CMD_XPERM failed for subcmd %d\n", subcmd);
+			ret = -EINVAL;
+		}
 		break;
 	}
 	case CMD_TYPE_STATE: {
@@ -376,8 +452,13 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 		} else {
 			pr_err("sepol: unknown subcmd: %d\n", subcmd);
 		}
-		if (success)
+		if (success) {
 			ret = 0;
+			need_avc_reset = true;
+		} else {
+			pr_err("sepol: CMD_TYPE_STATE failed\n");
+			ret = -EINVAL;
+		}
 		break;
 	}
 	case CMD_TYPE:
@@ -403,10 +484,13 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 			success = ksu_typeattribute(db, type, attr);
 		}
 		if (!success) {
-			pr_err("sepol: %d failed.\n", cmd);
+			pr_err("sepol: CMD %d failed for type=%s attr=%s\n", 
+			       cmd, type, attr);
+			ret = -EINVAL;
 			goto exit;
 		}
 		ret = 0;
+		need_avc_reset = true;
 		break;
 	}
 	case CMD_ATTR: {
@@ -418,10 +502,12 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 			goto exit;
 		}
 		if (!ksu_attribute(db, attr)) {
-			pr_err("sepol: %d failed.\n", cmd);
+			pr_err("sepol: CMD_ATTR failed for attr=%s\n", attr);
+			ret = -EINVAL;
 			goto exit;
 		}
 		ret = 0;
+		need_avc_reset = true;
 		break;
 	}
 	case CMD_TYPE_TRANSITION: {
@@ -466,8 +552,13 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 
 		bool success = ksu_type_transition(db, src, tgt, cls,
 						   default_type, real_object);
-		if (success)
+		if (success) {
 			ret = 0;
+			need_avc_reset = true;
+		} else {
+			pr_err("sepol: CMD_TYPE_TRANSITION failed\n");
+			ret = -EINVAL;
+		}
 		break;
 	}
 	case CMD_TYPE_CHANGE: {
@@ -506,8 +597,13 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 		} else {
 			pr_err("sepol: unknown subcmd: %d\n", subcmd);
 		}
-		if (success)
+		if (success) {
 			ret = 0;
+			need_avc_reset = true;
+		} else {
+			pr_err("sepol: CMD_TYPE_CHANGE failed\n");
+			ret = -EINVAL;
+		}
 		break;
 	}
 	case CMD_GENFSCON: {
@@ -531,14 +627,17 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 		}
 
 		if (!ksu_genfscon(db, name, path, context)) {
-			pr_err("sepol: %d failed.\n", cmd);
+			pr_err("sepol: CMD_GENFSCON failed\n");
+			ret = -EINVAL;
 			goto exit;
 		}
 		ret = 0;
+		need_avc_reset = true;
 		break;
 	}
 	default: {
 		pr_err("sepol: unknown cmd: %d\n", cmd);
+		ret = -EINVAL;
 		break;
 	}
 	}
@@ -546,9 +645,23 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 exit:
 	mutex_unlock(&ksu_rules);
 
-	// only allow and xallow needs to reset avc cache, but we cannot do that because
-	// we are in atomic context. so we just reset it every time.
-	reset_avc_cache();
+	// Only reset AVC cache on successful operations, and rate-limit it
+	if (need_avc_reset && ret == 0) {
+		unsigned long now = jiffies;
+		unsigned long elapsed = jiffies_to_msecs(now - sepolicy_last_reset);
+		
+		if (elapsed >= SEPOLICY_RESET_INTERVAL_MS) {
+			reset_avc_cache();
+			sepolicy_last_reset = now;
+		} else {
+			pr_debug("sepol: skipping AVC reset (too soon, %lu ms since last)\n", 
+			         elapsed);
+		}
+	}
 
+cleanup:
+	// Mark operation as complete
+	atomic_set(&sepolicy_in_progress, 0);
+	
 	return ret;
 }
