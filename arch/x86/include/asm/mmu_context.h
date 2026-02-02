@@ -181,7 +181,7 @@ static inline void arch_bprm_mm_init(struct mm_struct *mm,
 {
 	mpx_mm_init(mm);
 }
-
+m
 static inline void arch_unmap(struct mm_struct *mm, struct vm_area_struct *vma,
 			      unsigned long start, unsigned long end)
 {
@@ -213,11 +213,6 @@ static inline int vma_pkey(struct vm_area_struct *vma)
 				      VM_PKEY_BIT2 | VM_PKEY_BIT3;
 
 	return (vma->vm_flags & vma_pkey_mask) >> VM_PKEY_SHIFT;
-}
-#else
-static inline int vma_pkey(struct vm_area_struct *vma)
-{
-	return 0;
 }
 #endif
 

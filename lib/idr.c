@@ -1053,8 +1053,15 @@ void ida_remove(struct ida *ida, int id)
 EXPORT_SYMBOL(ida_remove);
 
 /**
- * ida_destroy - release all cached layers within an ida tree
- * @ida:		ida handle
+ * ida_destroy() - Free all IDs.
+ * @ida: IDA handle.
+ *
+ * Calling this function frees all IDs and releases all resources used
+ * by an IDA.  When this call returns, the IDA is empty and can be reused
+ * or freed.  If the IDA is already empty, there is no need to call this
+ * function.
+ *
+ * Context: Any context.
  */
 void ida_destroy(struct ida *ida)
 {
@@ -1064,40 +1071,37 @@ void ida_destroy(struct ida *ida)
 EXPORT_SYMBOL(ida_destroy);
 
 /**
- * ida_simple_get - get a new id.
- * @ida: the (initialized) ida.
- * @start: the minimum id (inclusive, < 0x8000000)
- * @end: the maximum id (exclusive, < 0x8000000 or 0)
- * @gfp_mask: memory allocation flags
+ * ida_alloc_range() - Allocate an unused ID.
+ * @ida: IDA handle.
+ * @min: Lowest ID to allocate.
+ * @max: Highest ID to allocate.
+ * @gfp: Memory allocation flags.
  *
- * Allocates an id in the range start <= id < end, or returns -ENOSPC.
- * On memory allocation failure, returns -ENOMEM.
+ * Allocate an ID between @min and @max, inclusive.  The allocated ID will
+ * not exceed %INT_MAX, even if @max is larger.
  *
- * Use ida_simple_remove() to get rid of an id.
+ * Context: Any context.
+ * Return: The allocated ID, or %-ENOMEM if memory could not be allocated,
+ * or %-ENOSPC if there are no free IDs.
  */
-int ida_simple_get(struct ida *ida, unsigned int start, unsigned int end,
-		   gfp_t gfp_mask)
+int ida_alloc_range(struct ida *ida, unsigned int min, unsigned int max,
+		    gfp_t gfp)
 {
 	int ret, id;
-	unsigned int max;
 	unsigned long flags;
 
-	BUG_ON((int)start < 0);
-	BUG_ON((int)end < 0);
+	if ((int)min < 0)
+		return -ENOSPC;
 
-	if (end == 0)
-		max = 0x80000000;
-	else {
-		BUG_ON(end < start);
-		max = end - 1;
-	}
+	if ((int)max < 0)
+		max = INT_MAX;
 
 again:
-	if (!ida_pre_get(ida, gfp_mask))
+	if (!ida_pre_get(ida, gfp))
 		return -ENOMEM;
 
 	spin_lock_irqsave(&simple_ida_lock, flags);
-	ret = ida_get_new_above(ida, start, &id);
+	ret = ida_get_new_above(ida, min, &id);
 	if (!ret) {
 		if (id > max) {
 			ida_remove(ida, id);
@@ -1113,14 +1117,16 @@ again:
 
 	return ret;
 }
-EXPORT_SYMBOL(ida_simple_get);
+EXPORT_SYMBOL(ida_alloc_range);
 
 /**
- * ida_simple_remove - remove an allocated id.
- * @ida: the (initialized) ida.
- * @id: the id returned by ida_simple_get.
+ * ida_free() - Release an allocated ID.
+ * @ida: IDA handle.
+ * @id: Previously allocated ID.
+ *
+ * Context: Any context.
  */
-void ida_simple_remove(struct ida *ida, unsigned int id)
+void ida_free(struct ida *ida, unsigned int id)
 {
 	unsigned long flags;
 
@@ -1129,7 +1135,7 @@ void ida_simple_remove(struct ida *ida, unsigned int id)
 	ida_remove(ida, id);
 	spin_unlock_irqrestore(&simple_ida_lock, flags);
 }
-EXPORT_SYMBOL(ida_simple_remove);
+EXPORT_SYMBOL(ida_free);
 
 /**
  * ida_init - initialize ida handle

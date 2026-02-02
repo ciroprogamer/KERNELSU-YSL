@@ -17,6 +17,7 @@
 #include <linux/shmem_fs.h>
 #include <linux/mm_inline.h>
 #include <linux/ctype.h>
+#include <linux/pkeys.h>
 
 #include <asm/elf.h>
 #include <asm/uaccess.h>
@@ -304,7 +305,6 @@ static int proc_map_release(struct inode *inode, struct file *file)
 	if (priv->mm)
 		mmdrop(priv->mm);
 
-	kfree(priv->rollup);
 	return seq_release_private(inode, file);
 }
 
@@ -533,7 +533,6 @@ const struct file_operations proc_tid_maps_operations = {
 
 #ifdef CONFIG_PROC_PAGE_MONITOR
 struct mem_size_stats {
-	bool first;
 	unsigned long resident;
 	unsigned long shared_clean;
 	unsigned long shared_dirty;
@@ -551,6 +550,7 @@ struct mem_size_stats {
 	u64 pss_locked;
 	u64 swap_pss;
 	bool check_shmem_swap;
+	bool first;
 };
 
 static void smaps_account(struct mem_size_stats *mss, struct page *page,
@@ -829,12 +829,9 @@ void __weak arch_show_smap(struct seq_file *m, struct vm_area_struct *vma)
 {
 }
 
-static int show_smap(struct seq_file *m, void *v, int is_pid)
+static void smap_gather_stats(struct vm_area_struct *vma,
+			     struct mem_size_stats *mss)
 {
-	struct proc_maps_private *priv = m->private;
-	struct vm_area_struct *vma = v;
-	struct mem_size_stats mss_stack;
-	struct mem_size_stats *mss;
 	struct mm_walk smaps_walk = {
 		.pmd_entry = smaps_pte_range,
 #ifdef CONFIG_HUGETLB_PAGE
@@ -842,23 +839,6 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 #endif
 		.mm = vma->vm_mm,
 	};
-	int ret = 0;
-	bool rollup_mode;
-	bool last_vma;
-
-	if (priv->rollup) {
-		rollup_mode = true;
-		mss = priv->rollup;
-		if (mss->first) {
-			mss->first_vma_start = vma->vm_start;
-			mss->first = false;
-		}
-		last_vma = !m_next_vma(priv, vma);
-	} else {
-		rollup_mode = false;
-		memset(&mss_stack, 0, sizeof(mss_stack));
-		mss = &mss_stack;
-	}
 
 	smaps_walk.private = mss;
 
@@ -889,6 +869,33 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 #endif
 	/* mmap_sem is held in m_start */
 	walk_page_vma(vma, &smaps_walk);
+}
+
+static int show_smap(struct seq_file *m, void *v, int is_pid)
+{
+	struct proc_maps_private *priv = m->private;
+	struct vm_area_struct *vma = v;
+	struct mem_size_stats mss_stack;
+	struct mem_size_stats *mss;
+	int ret = 0;
+	bool rollup_mode;
+	bool last_vma;
+
+	if (priv->rollup) {
+		rollup_mode = true;
+		mss = priv->rollup;
+		if (mss->first) {
+			mss->first_vma_start = vma->vm_start;
+			mss->first = false;
+		}
+		last_vma = !m_next_vma(priv, vma);
+	} else {
+		rollup_mode = false;
+		memset(&mss_stack, 0, sizeof(mss_stack));
+		mss = &mss_stack;
+	}
+
+	smap_gather_stats(vma, mss);
 
 	if (!rollup_mode) {
 		show_map_vma(m, vma, is_pid);
@@ -916,7 +923,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 			   vma_kernel_pagesize(vma) >> 10,
 			   vma_mmu_pagesize(vma) >> 10);
 
-	if (!rollup_mode || last_vma)
+	if (!rollup_mode || last_vma) {
 		seq_printf(m,
 			   "Rss:            %8lu kB\n"
 			   "Pss:            %8lu kB\n"
@@ -948,6 +955,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 			   mss->swap >> 10,
 			   (unsigned long)(mss->swap_pss >> (10 + PSS_SHIFT)),
 			   (unsigned long)(mss->pss_locked >> (10 + PSS_SHIFT)));
+	}
 
 
 	if (!rollup_mode) {
