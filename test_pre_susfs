@@ -1,0 +1,11 @@
+
+grep -n "show_map_vma(" fs/proc/task_mmu.c | head -1
+
+grep -n "show_smap(" fs/proc/task_mmu.c | head -1
+
+grep -n "seq_put_hex_ll" fs/seq_file.c
+grep -n "seq_put_decimal_ull_width" fs/seq_file.c
+grep -n "__show_smap" fs/proc/task_mmu.c
+grep -n "show_smaps_rollup" fs/proc/task_mmu.c
+grep -n "^#define SEQ_PUT_DEC" fs/proc/task_mmu.c
+grep -A 18 "struct mem_size_stats {" fs/proc/task_mmu.c | grep -E "lazyfree|first_vma_start"
