@@ -55,7 +55,7 @@ config KPM
 	  depends on KSU && 64BIT
 	  select KALLSYMS
 	  select KALLSYMS_ALL
-	  default n
+	  default y
 	  help
 		Enabling this option will activate the KPM feature of SukiSU.
 		This option is suitable for scenarios where you need to force KPM to be enabled.
@@ -73,14 +73,14 @@ config KSU_SUSFS
 	bool "KernelSU addon - SUSFS"
 	depends on KSU
 	depends on THREAD_INFO_IN_TASK
-	default n
+	default y
 	help
 		Patch and Enable SUSFS to kernel with KernelSU.
 
 config KSU_SUSFS_SUS_PATH
 	bool "Enable to hide suspicious path (NOT recommended)"
 	depends on KSU_SUSFS
-	default y
+	default n
 	help
 		- Allow hiding the user-defined path and all its sub-paths from various system calls.
 		- Includes temp fix for the leaks of app path in /sdcard/Android/data directory.
