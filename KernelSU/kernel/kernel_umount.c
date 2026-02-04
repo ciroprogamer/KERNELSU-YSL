@@ -22,7 +22,11 @@
 #include "ksud.h"
 #include "ksu.h"
 
+#ifndef CONFIG_KSU_SUSFS
 static bool ksu_kernel_umount_enabled = true;
+#else
+bool ksu_kernel_umount_enabled = true;
+#endif // #ifndef CONFIG_KSU_SUSFS
 
 static int kernel_umount_feature_get(u64 *value)
 {
@@ -78,7 +82,11 @@ static int ksu_sys_umount(const char *mnt, int flags)
 
 #endif
 
+#if !defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
 static void try_umount(const char *mnt, int flags)
+#else
+void try_umount(const char *mnt, int flags)
+#endif
 {
 	struct path path;
 	int ret = 0;
@@ -103,6 +111,7 @@ struct umount_tw {
 	struct callback_head cb;
 };
 
+#if !defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
 static void umount_tw_func(struct callback_head *cb)
 {
 	struct umount_tw *tw = container_of(cb, struct umount_tw, cb);
@@ -161,7 +170,6 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 			current->pid);
 		return 0;
 	}
-#endif // #ifndef CONFIG_KSU_SUSFS
 
 	// umount the target mnt
 	pr_info("handle umount for uid: %d, pid: %d\n", new_uid, current->pid);
@@ -178,9 +186,11 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 		kfree(tw);
 		pr_warn("unmount add task_work failed\n");
 	}
+#endif // CONFIG_KSU_SUSFS
 
 	return 0;
 }
+#endif // #if !defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
 
 void ksu_kernel_umount_init(void)
 {

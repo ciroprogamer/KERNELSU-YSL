@@ -200,6 +200,7 @@ void apply_kernelsu_rules()
 	ksu_allow(db, ALL, "su", "binder", ALL);
 
 #ifdef CONFIG_KSU_SUSFS
+	ksu_allow(db, "zygote", "labeledfs", "filesystem", "unmount");
 	susfs_set_priv_app_sid();
 	susfs_set_init_sid();
 	susfs_set_ksu_sid();
