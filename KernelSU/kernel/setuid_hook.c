@@ -35,14 +35,14 @@
 #ifdef CONFIG_KSU_SUSFS
 static inline bool is_zygote_isolated_service_uid(uid_t uid)
 {
-	uid %= 100000;
-	return (uid >= 99000 && uid < 100000);
+    uid %= 100000;
+    return (uid >= 99000 && uid < 100000);
 }
 
 static inline bool is_zygote_normal_app_uid(uid_t uid)
 {
-	uid %= 100000;
-	return (uid >= 10000 && uid < 19999);
+    uid %= 100000;
+    return (uid >= 10000 && uid < 19999);
 }
 
 extern u32 susfs_zygote_sid;
@@ -185,7 +185,6 @@ do_umount:
 #else
     susfs_try_umount(new_uid);
 #endif // #ifndef CONFIG_KSU_SUSFS_TRY_UMOUNT
-
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	// We can reorder the mnt_id now after all sus mounts are umounted
 	susfs_reorder_mnt_id();

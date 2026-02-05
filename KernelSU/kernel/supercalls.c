@@ -19,6 +19,7 @@
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/namei.h>
 #include <linux/susfs.h>
+#include "objsec.h"
 #endif // #ifdef CONFIG_KSU_SUSFS
 
 #include "supercalls.h"
@@ -472,9 +473,7 @@ static int do_manage_mark(void __user *arg)
 	}
 	return 0;
 #else
-	// We don't care, just return -ENOTSUPP
-	pr_warn("manage_mark: this supercalls is not implemented for manual hook.\n");
-	return -ENOTSUPP;
+	return -ENOSYS;
 #endif
 }
 
@@ -935,7 +934,6 @@ static int ksu_handle_fd_request(void __user *arg)
 }
 #endif
 
-#ifndef CONFIG_KSU_SUSFS
 int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 			  void __user **arg)
 {
@@ -962,22 +960,12 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		return ksu_handle_fd_request(argp);
 	}
 
-	return 0;
-}
-
-#else
-int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
-			  void __user **arg)
-{
-	if (magic1 != KSU_INSTALL_MAGIC1) {
-		return -EINVAL;
-	}
-
+#ifdef CONFIG_KSU_SUSFS
 	// If magic2 is susfs and current process is root
 	if (magic2 == SUSFS_MAGIC && current_uid().val == 0) {
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 		if (cmd == CMD_SUSFS_ADD_SUS_PATH) {
-			susfs_add_sus_path((struct st_susfs_sus_path __user *)*arg);
+			susfs_add_sus_path(arg);
 			return 0;
 		}
 		if (cmd == CMD_SUSFS_ADD_SUS_PATH_LOOP) {
@@ -1001,29 +989,27 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 		if (cmd == CMD_SUSFS_ADD_SUS_KSTAT) {
-			susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);
+			susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)argp);
 			return 0;
 		}
 		if (cmd == CMD_SUSFS_UPDATE_SUS_KSTAT) {
-			susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);
+			susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)argp);
 			return 0;
 		}
 		if (cmd == CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY) {
-			susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);
+			susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)argp);
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-        if (cmd == CMD_SUSFS_ADD_TRY_UMOUNT) {
-            susfs_add_try_umount(arg);
-            return 0;
-        }
+		if (cmd == CMD_SUSFS_ADD_TRY_UMOUNT) {
+			susfs_add_try_umount(arg);
+			return 0;
+		}
 #endif //#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 		if (cmd == CMD_SUSFS_SET_UNAME) {
-			susfs_set_uname((struct st_susfs_uname __user *)*arg);
+			susfs_set_uname((struct st_susfs_uname __user *)argp);
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
@@ -1035,13 +1021,13 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 #endif //#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
 #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 		if (cmd == CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG) {
-			susfs_set_cmdline_or_bootconfig((struct st_susfs_spoof_cmdline_or_bootconfig __user *)*arg);
+			susfs_set_cmdline_or_bootconfig((struct st_susfs_spoof_cmdline_or_bootconfig __user *)argp);
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 		if (cmd == CMD_SUSFS_ADD_OPEN_REDIRECT) {
-			susfs_add_open_redirect((struct st_susfs_open_redirect __user *)*arg);
+			susfs_add_open_redirect((struct st_susfs_open_redirect __user *)argp);
 			return 0;
 		}
 #endif //#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
@@ -1069,23 +1055,10 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		}
 		return 0;
 	}
+#endif // #ifdef CONFIG_KSU_SUSFS
 
-	// Check if this is a request to install KSU fd
-    // Dereference **arg.. with IS_ERR check.
-	void __user *argp = (void __user *)*arg;
-	if (IS_ERR(argp)) {
-		pr_err("Failed to deref user arg, err: %lu\n", PTR_ERR(argp));
-		return 0;
-	}
-
-	// Check if this is a request to install KSU fd
-	if (magic2 == KSU_INSTALL_MAGIC2) {
-		return ksu_handle_fd_request(argp);
-	}
-	
-    return 0;
+	return 0;
 }
-#endif // #ifndef CONFIG_KSU_SUSFS
 
 void ksu_supercalls_init(void)
 {

@@ -67,10 +67,6 @@
 
 #include <trace/events/sched.h>
 
-#ifdef CONFIG_KSU_SUSFS
-#include <linux/susfs_def.h>
-#endif
-
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -1681,24 +1677,13 @@ static int exec_binprm(struct linux_binprm *bprm)
  * sys_execve() executes a new program.
  */
 
-#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_SUSFS)
+#ifdef CONFIG_KSU
 extern bool ksu_execveat_hook __read_mostly;
 extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
 			void *envp, int *flags);
 extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 				 void *argv, void *envp, int *flags);
 #endif
-
-#ifdef CONFIG_KSU_SUSFS
-extern bool ksu_execveat_hook __read_mostly;
-extern bool susfs_is_boot_completed_triggered __read_mostly;
-extern bool __ksu_is_allow_uid_for_current(uid_t uid);
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-			void *envp, int *flags);
-extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
-				void *envp, int *flags);
-#endif
-
 
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
@@ -1712,29 +1697,15 @@ static int do_execveat_common(int fd, struct filename *filename,
 	int retval;
 	bool is_su;
 
-#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_SUSFS)
-	if (unlikely(ksu_execveat_hook))
-		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-	else
-		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
-#endif
+	#ifdef CONFIG_KSU
+		if (unlikely(ksu_execveat_hook))
+			ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+		else
+			ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
+	#endif
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
-
-#ifdef CONFIG_KSU_SUSFS
-	if (likely(susfs_is_current_proc_umounted())) {
-		goto orig_flow;
-	}
-
-	if (unlikely(ksu_execveat_hook || !susfs_is_boot_completed_triggered)) {
-		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-	} else if ((__ksu_is_allow_uid_for_current(current_uid().val))) {
-		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
-	}
-
-orig_flow:
-#endif
 	
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
