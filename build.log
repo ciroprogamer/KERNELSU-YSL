@@ -12,18 +12,17 @@ make[1]: Entering directory '/home/ciro/kernel_xiaomi_ysl/out'
   CALL    ../scripts/checksyscalls.sh
   CHK     include/generated/compile.h
   CHK     kernel/config_data.h
--- SukiSU-Ultra version (GitHub): 40510
--- SukiSU-Ultra version (Github): v4.1.1-4cfac3b9@post_prep
--- KernelSU: CONFIG_KSU_MANUAL_HOOK
--- KERNEL_VERSION: 4.9
--- KERNEL_TYPE: Non-GKI
--- KPM is enabled
+-- KernelSU-Next Git repo detected at: /home/ciro/kernel_xiaomi_ysl/KernelSU-Next
+-- KernelSU-Next version: 32976
+-- KernelSU-Next tag: v3.0.1-legacy
+-- KernelSU-Next Manager signature size: 0x3e6
+-- KernelSU-Next Manager signature hash: 79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7
+-- KernelSU-Next: Hook mode: Manual
 
 -- SUSFS_VERSION: v2.0.0
-  CC      drivers/kernelsu/ksuinit.o
-  CC      drivers/kernelsu/supercalls.o
-  LD      drivers/kernelsu/kernelsu.o
-  LD      drivers/kernelsu/built-in.o
+  CC      drivers/md/dm-verity-target.o
+  LD      drivers/md/dm-verity.o
+  LD      drivers/md/built-in.o
   LD      drivers/built-in.o
   CC      techpack/audio/ipc/apr.o
   CC      techpack/audio/ipc/apr_v2.o

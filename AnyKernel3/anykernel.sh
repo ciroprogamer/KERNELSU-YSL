@@ -4,7 +4,7 @@
 ## AnyKernel setup
 # begin properties
 properties() { '
-kernel.string=YSL_SukiSu Kernel(Storm Breaker based)
+kernel.string=YSL_KSUNEXT+SUSFS Kernel(Storm Breaker based)
 maintainer.string1=@HeavenRefining_DemonVenerable | @ciroprogamer86
 maintainer.string2=ItsVixano TG:@GiovanniRN5
 maintainer.string3=Saalim Quadri, Team StormBreaker Head
@@ -76,7 +76,7 @@ ui_print "  ✓ Backported set_memory.h"
 ui_print "  ✓ Storm Breaker Source"
 ui_print " "
 ui_print "    NOTES:"
-ui_print "     × SusFs not integrated (version mismatch, sorry, i refuse to backport 18446744073709551615₁₀ files)"
+ui_print "     SusFs integrated (KernelSU next made it possible)"
 ui_print "     ⓘ KPM support is untested(may brick your phone if you actually use it, or may not, idk)"
 ui_print " "
 

@@ -422,11 +422,11 @@ static int susfs_update_sus_kstat_inode(char *target_pathname) {
 	return 0;
 }
 
-void susfs_add_sus_kstat(struct st_susfs_sus_kstat __user *user_info) {
+void susfs_add_sus_kstat(void __user **user_info) {
 	struct st_susfs_sus_kstat info = {0};
 	struct st_susfs_sus_kstat_hlist *new_entry;
 
-		if (copy_from_user(&info, user_info, sizeof(info))) {
+		if (copy_from_user(&info, (struct st_susfs_sus_kstat __user *)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -483,7 +483,7 @@ void susfs_add_sus_kstat(struct st_susfs_sus_kstat __user *user_info) {
 #endif
 	info.err = 0;
 out_copy_to_user:
-		if (copy_to_user(&user_info->err, &info.err, sizeof(info.err))) {
+		if (copy_to_user(&((struct st_susfs_sus_kstat __user *)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	if (!info.is_statically) {
@@ -493,13 +493,13 @@ out_copy_to_user:
 	}
 }
 
-void susfs_update_sus_kstat(struct st_susfs_sus_kstat __user *user_info) {
+void susfs_update_sus_kstat(void __user **user_info) {
 	struct st_susfs_sus_kstat info = {0};
 	struct st_susfs_sus_kstat_hlist *new_entry, *tmp_entry;
 	struct hlist_node *tmp_node;
 	int bkt;
 
-	if (copy_from_user(&info, user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_sus_kstat __user *)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -540,7 +540,7 @@ void susfs_update_sus_kstat(struct st_susfs_sus_kstat __user *user_info) {
 		}
 	}
 out_copy_to_user:
-	if (copy_to_user(&user_info->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_sus_kstat __user *)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_UPDATE_SUS_KSTAT -> ret: %d\n", info.err);
@@ -645,10 +645,10 @@ static void susfs_my_uname_init(void) {
 	memset(&my_uname, 0, sizeof(my_uname));
 }
 
-void susfs_set_uname(struct st_susfs_uname __user *user_info) {
+void susfs_set_uname(void __user **user_info) {
 	struct st_susfs_uname info = {0};
 
-	if (copy_from_user(&info, user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_uname __user *)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -669,7 +669,7 @@ void susfs_set_uname(struct st_susfs_uname __user *user_info) {
 				my_uname.release, my_uname.version);
 	info.err = 0;
 out_copy_to_user:
-	if (copy_to_user(&user_info->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_uname __user *)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_SET_UNAME -> ret: %d\n", info.err);
@@ -718,15 +718,17 @@ static DEFINE_SPINLOCK(susfs_spin_lock_set_cmdline_or_bootconfig);
 static char *fake_cmdline_or_bootconfig = NULL;
 static bool susfs_is_fake_cmdline_or_bootconfig_set = false;
 
-void susfs_set_cmdline_or_bootconfig(struct st_susfs_spoof_cmdline_or_bootconfig __user *user_info) {
+void susfs_set_cmdline_or_bootconfig(void __user **user_info) {
 	struct st_susfs_spoof_cmdline_or_bootconfig *info = (struct st_susfs_spoof_cmdline_or_bootconfig *)kzalloc(sizeof(struct st_susfs_spoof_cmdline_or_bootconfig), GFP_KERNEL);
 	
 	if (!info) {
-		info->err = -ENOMEM;
-		goto out_copy_to_user;
+		struct st_susfs_spoof_cmdline_or_bootconfig temp_info = {0};
+		temp_info.err = -ENOMEM;
+		copy_to_user(&((struct st_susfs_spoof_cmdline_or_bootconfig __user *)*user_info)->err, &temp_info.err, sizeof(temp_info.err));
+		return;
 	}
 
-	if (copy_from_user(info, user_info, sizeof(struct st_susfs_spoof_cmdline_or_bootconfig))) {
+	if (copy_from_user(info, (struct st_susfs_spoof_cmdline_or_bootconfig __user *)*user_info, sizeof(struct st_susfs_spoof_cmdline_or_bootconfig))) {
 		info->err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -751,7 +753,7 @@ out_copy_to_user:
 	if (info->err) {
 		susfs_is_fake_cmdline_or_bootconfig_set = false;
 	}
-	if (copy_to_user(&user_info->err, &info->err, sizeof(info->err))) {
+	if (copy_to_user(&((struct st_susfs_spoof_cmdline_or_bootconfig __user *)*user_info)->err, &info->err, sizeof(info->err))) {
 		info->err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> ret: %d\n", info->err);
@@ -801,11 +803,11 @@ out_path_put_target:
 	return err;
 }
 
-void susfs_add_open_redirect(struct st_susfs_open_redirect __user *user_info) {
+void susfs_add_open_redirect(void __user **user_info) {
 	struct st_susfs_open_redirect info = {0};
 	struct st_susfs_open_redirect_hlist *new_entry;
 
-	if (copy_from_user(&info, user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_open_redirect __user *)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -833,7 +835,7 @@ void susfs_add_open_redirect(struct st_susfs_open_redirect __user *user_info) {
 			new_entry->target_ino, new_entry->target_pathname, new_entry->redirected_pathname);
 	info.err = 0;
 out_copy_to_user:
-	if (copy_to_user(&user_info->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_open_redirect __user *)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_ADD_OPEN_REDIRECT -> ret: %d\n", info.err);

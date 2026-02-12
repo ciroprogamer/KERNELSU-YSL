@@ -2,7 +2,7 @@ VERSION = 4
 PATCHLEVEL = 9
 SUBLEVEL = 257
 EXTRAVERSION =
-NAME = StormBreaker_YSL-SukiSU+KPM-ciro
+NAME = StormBreaker_YSL_KSUNEXT+SUSFS-ciro
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

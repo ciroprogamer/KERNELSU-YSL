@@ -8,7 +8,7 @@ KERNELVERSION := $(shell cat ../Makefile | grep VERSION | head -n 1 | sed "s|.*=
 
 KERNELPATCHLEVEL := $(shell cat ../Makefile | grep PATCHLEVEL | head -n 1 | sed "s|.*=||1" | sed "s| ||g")
 
-ZIP := SUkiSU_YSL_by_ciro.zip
+ZIP := KSUNEXT+SUSFS_YSL_by_ciro.zip
 
 EXCLUDE := Makefile *.git* *.jar* *placeholder* *.md*
 
