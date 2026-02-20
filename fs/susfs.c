@@ -14,6 +14,8 @@
 #include <linux/fdtable.h>
 #include <linux/statfs.h>
 #include <linux/random.h>
+#include <linux/delay.h>
+#include <linux/fsnotify_backend.h>
 #include <linux/susfs.h>
 #include "mount.h"
 
@@ -70,7 +72,7 @@ void susfs_set_i_state_on_external_dir(void __user **user_info) {
 	
 	if (info.cmd == CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH) {
 		spin_lock(&inode->i_lock);
-		set_bit(AS_FLAGS_ANDROID_DATA_ROOT_DIR, &inode->i_mapping->flags);
+		set_bit(AS_FLAGS_ANDROID_DATA_ROOT_DIR, &inode->i_state);
 		spin_unlock(&inode->i_lock);
 		strncpy(android_data_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);
 		android_data_path.is_inited = true;
@@ -80,7 +82,7 @@ void susfs_set_i_state_on_external_dir(void __user **user_info) {
 		info.err = 0;
 	} else if (info.cmd == CMD_SUSFS_SET_SDCARD_ROOT_PATH) {
 		spin_lock(&inode->i_lock);
-		set_bit(AS_FLAGS_SDCARD_ROOT_DIR, &inode->i_mapping->flags);
+		set_bit(AS_FLAGS_SDCARD_ROOT_DIR, &inode->i_state);
 		spin_unlock(&inode->i_lock);
 		strncpy(sdcard_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);
 		sdcard_path.is_inited = true;
@@ -179,7 +181,7 @@ void susfs_add_sus_path(void __user **user_info) {
 	}
 
 	spin_lock(&inode->i_lock);
-	set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
+	set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
 	spin_unlock(&inode->i_lock);
 	SUSFS_LOGI("pathname: '%s', ino: '%lu', is flagged as AS_FLAGS_SUS_PATH\n", info.target_pathname, info.target_ino);
 	info.err = 0;
@@ -240,7 +242,7 @@ void susfs_add_sus_path_loop(void __user **user_info) {
 	SUSFS_LOGI("target_ino: '%lu', target_pathname: '%s', i_uid: '%u', is successfully added to LH_SUS_PATH_LOOP\n",
 				new_list->info.target_ino, new_list->target_pathname, new_list->info.i_uid);
 	spin_lock(&inode->i_lock);
-	set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
+	set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
 	spin_unlock(&inode->i_lock);
 	SUSFS_LOGI("pathname: '%s', ino: '%lu', is flagged as AS_FLAGS_SUS_PATH\n", info.target_pathname, info.target_ino);
 	info.err = 0;
@@ -262,7 +264,7 @@ void susfs_run_sus_path_loop(uid_t uid) {
 		if (!kern_path(cursor->target_pathname, 0, &path)) {
 			inode = path.dentry->d_inode;
 			spin_lock(&inode->i_lock);
-			set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
+			set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
 			spin_unlock(&inode->i_lock);
 			path_put(&path);
 			SUSFS_LOGI("re-flag '%s' as SUS_PATH for uid: %u\n", cursor->target_pathname, uid);
@@ -285,11 +287,11 @@ static inline bool is_i_uid_not_allowed(uid_t i_uid) {
 }
 
 bool susfs_is_base_dentry_android_data_dir(struct dentry* base) {
-	return (base && !IS_ERR(base) && base->d_inode && (base->d_inode->i_mapping->flags & BIT_ANDROID_DATA_ROOT_DIR));
+	return (base && !IS_ERR(base) && base->d_inode && (base->d_inode->i_state & BIT_ANDROID_DATA_ROOT_DIR));
 }
 
 bool susfs_is_base_dentry_sdcard_dir(struct dentry* base) {
-	return (base && !IS_ERR(base) && base->d_inode && (base->d_inode->i_mapping->flags & BIT_ANDROID_SDCARD_ROOT_DIR));
+	return (base && !IS_ERR(base) && base->d_inode && (base->d_inode->i_state & BIT_ANDROID_SDCARD_ROOT_DIR));
 }
 
 bool susfs_is_sus_android_data_d_name_found(const char *d_name) {
@@ -334,7 +336,7 @@ bool susfs_is_sus_sdcard_d_name_found(const char *d_name) {
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 bool susfs_is_inode_sus_path(struct mnt_idmap* idmap, struct inode *inode) {
-	if (unlikely(inode->i_mapping->flags & BIT_SUS_PATH &&
+	if (unlikely(inode->i_state & BIT_SUS_PATH &&
 		is_i_uid_not_allowed(i_uid_into_vfsuid(idmap, inode).val)))
 	{
 		SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
@@ -344,7 +346,7 @@ bool susfs_is_inode_sus_path(struct mnt_idmap* idmap, struct inode *inode) {
 }
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 bool susfs_is_inode_sus_path(struct inode *inode) {
-	if (unlikely(inode->i_mapping->flags & BIT_SUS_PATH &&
+	if (unlikely(inode->i_state & BIT_SUS_PATH &&
 		is_i_uid_not_allowed(i_uid_into_mnt(i_user_ns(inode), inode).val)))
 	{
 		SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
@@ -354,7 +356,7 @@ bool susfs_is_inode_sus_path(struct inode *inode) {
 }
 #else
 bool susfs_is_inode_sus_path(struct inode *inode) {
-	if (unlikely(inode->i_mapping->flags & BIT_SUS_PATH &&
+	if (unlikely(inode->i_state & BIT_SUS_PATH &&
 		is_i_uid_not_allowed(inode->i_uid.val)))
 	{
 		SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
@@ -369,25 +371,25 @@ bool susfs_is_inode_sus_path(struct inode *inode) {
 /* sus_mount */
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 static DEFINE_SPINLOCK(susfs_spin_lock_sus_mount);
-bool susfs_hide_sus_mnts_for_all_procs = true; // hide sus mounts for all processes by default
+bool susfs_hide_sus_mnts_for_non_su_procs = true; // hide sus mounts for all processes by default
 
-void susfs_set_hide_sus_mnts_for_all_procs(void __user **user_info) {
-	struct st_susfs_hide_sus_mnts_for_all_procs info = {0};
+void susfs_set_hide_sus_mnts_for_non_su_procs(void __user **user_info) {
+	struct st_susfs_hide_sus_mnts_for_non_su_procs info = {0};
 
-	if (copy_from_user(&info, (struct st_susfs_hide_sus_mnts_for_all_procs __user*)*user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_hide_sus_mnts_for_non_su_procs __user*)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
 	spin_lock(&susfs_spin_lock_sus_mount);
-	susfs_hide_sus_mnts_for_all_procs = info.enabled;
+	susfs_hide_sus_mnts_for_non_su_procs = info.enabled;
 	spin_unlock(&susfs_spin_lock_sus_mount);
-	SUSFS_LOGI("susfs_hide_sus_mnts_for_all_procs: %d\n", info.enabled);
+	SUSFS_LOGI("susfs_hide_sus_mnts_for_non_su_procs: %d\n", info.enabled);
 	info.err = 0;
 out_copy_to_user:
-	if (copy_to_user(&((struct st_susfs_hide_sus_mnts_for_all_procs __user*)*user_info)->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_hide_sus_mnts_for_non_su_procs __user*)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
-	SUSFS_LOGI("CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS -> ret: %d\n", info.err);
+	SUSFS_LOGI("CMD_SUSFS_hide_sus_mnts_for_non_su_procs -> ret: %d\n", info.err);
 }
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
@@ -413,9 +415,9 @@ static int susfs_update_sus_kstat_inode(char *target_pathname) {
 		return 1;
 	}
 
-	if (!(inode->i_mapping->flags & BIT_SUS_KSTAT)) {
+	if (!(inode->i_state & BIT_SUS_KSTAT)) {
 		spin_lock(&inode->i_lock);
-		set_bit(AS_FLAGS_SUS_KSTAT, &inode->i_mapping->flags);
+		set_bit(AS_FLAGS_SUS_KSTAT, &inode->i_state);
 		spin_unlock(&inode->i_lock);
 	}
 	path_put(&p);
@@ -795,7 +797,7 @@ static int susfs_update_open_redirect_inode(struct st_susfs_open_redirect_hlist 
 	}
 
 	spin_lock(&inode_target->i_lock);
-	set_bit(AS_FLAGS_OPEN_REDIRECT, &inode_target->i_mapping->flags);
+	set_bit(AS_FLAGS_OPEN_REDIRECT, &inode_target->i_state);
 	spin_unlock(&inode_target->i_lock);
 
 out_path_put_target:
@@ -878,7 +880,7 @@ void susfs_add_sus_map(void __user **user_info) {
 	}
 	inode = d_inode(path.dentry);
 	spin_lock(&inode->i_lock);
-	set_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags);
+	set_bit(AS_FLAGS_SUS_MAP, &inode->i_state);
 	spin_unlock(&inode->i_lock);
 	SUSFS_LOGI("pathname: '%s', is flagged as AS_FLAGS_SUS_MAP\n", info.target_pathname);
 	info.err = 0;
@@ -1043,6 +1045,177 @@ out_copy_to_user:
 	}
 	SUSFS_LOGI("CMD_SUSFS_SHOW_VERSION -> ret: %d\n", info.err);
 }
+
+/* kthread for checking if /sdcard/Android is accessible via fsnoitfy */
+/* code is straightly borrowed from KernelSU's pkg_observer.c */
+#define SDCARD_ANDROID_DATA_PATH "/data/media/0/Android"
+extern void setup_selinux(const char *domain, struct cred *cred);
+extern bool susfs_is_current_ksu_domain(void);
+bool susfs_is_sdcard_android_data_decrypted __read_mostly = false;
+
+struct watch_dir {
+	const char *path;
+	u32 mask;
+	struct path kpath;
+	struct inode *inode;
+	struct fsnotify_mark *mark;
+};
+
+static struct fsnotify_group *g;
+
+static struct watch_dir g_watch = { .path = "/data/media/0", // we choose the underlying f2fs /data/media/0 instead of the FUSE /sdcard
+									.mask = (FS_EVENT_ON_CHILD | FS_ISDIR | FS_OPEN_PERM) };
+
+static int add_mark_on_inode(struct inode *inode, u32 mask,
+								struct fsnotify_mark **out);
+
+static unsigned long sdcard_cleanup_scheduled;
+static struct delayed_work sdcard_cleanup_dwork;
+
+static void susfs_sdcard_cleanup_fn(struct work_struct *work)
+{
+	struct fsnotify_group *grp;
+	struct inode *inode;
+
+	SUSFS_LOGI("set susfs_is_sdcard_android_data_decrypted to true\n");
+	WRITE_ONCE(susfs_is_sdcard_android_data_decrypted, true);
+
+	SUSFS_LOGI("cleaning up fsnotify sdcard watch\n");
+
+	grp = xchg(&g, NULL);
+	if (grp)
+		fsnotify_destroy_group(grp);
+
+	inode = xchg(&g_watch.inode, NULL);
+	if (inode)
+		iput(inode);
+
+	if (g_watch.kpath.mnt) {
+		path_put(&g_watch.kpath);
+		memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
+	}
+}
+
+
+static int watch_one_dir(struct watch_dir *wd)
+{
+	int ret = kern_path(wd->path, LOOKUP_FOLLOW, &wd->kpath);
+	if (ret) {
+		SUSFS_LOGI("path not ready: %s (%d)\n", wd->path, ret);
+		return ret;
+	}
+	wd->inode = d_inode(wd->kpath.dentry);
+	ihold(wd->inode);
+
+	ret = add_mark_on_inode(wd->inode, wd->mask, &wd->mark);
+	if (ret) {
+		SUSFS_LOGE("Add mark failed for %s (%d)\n", wd->path, ret);
+		iput(wd->inode);
+		wd->inode = NULL;
+		path_put(&wd->kpath);
+		return ret;
+	}
+	SUSFS_LOGI("watching %s\n", wd->path);
+	return 0;
+}
+
+/*
+ * fsnotify handler — runs inside an SRCU read section held by fsnotify().
+ * Must not block or call fsnotify_destroy_group() (which internally calls
+ * synchronize_srcu on the same SRCU struct, causing a permanent deadlock).
+ * Cleanup is deferred to a delayed_work that runs outside the SRCU context.
+ */
+static int susfs_handle_sdcard_inode_event(struct fsnotify_group *group,
+											struct inode *to_tell,
+											struct fsnotify_mark *inode_mark,
+											struct fsnotify_mark *vfsmount_mark,
+											u32 mask, const void *data, int data_type,
+											const unsigned char *file_name, u32 cookie,
+											struct fsnotify_iter_info *iter_info)
+{
+	if (!file_name || strlen(file_name) != 7 ||
+	    memcmp(file_name, "Android", 7))
+		return 0;
+
+	if (test_and_set_bit(0, &sdcard_cleanup_scheduled))
+		return 0;
+	SUSFS_LOGI("'%s' detected, mask: 0x%x\n", SDCARD_ANDROID_DATA_PATH, mask);
+	SUSFS_LOGI("deferring cleanup for 5 seconds\n");
+	queue_delayed_work(system_unbound_wq, &sdcard_cleanup_dwork, 5 * HZ);
+	return 0;
+}
+
+static const struct fsnotify_ops fsnotify_ops = {
+	.handle_event = susfs_handle_sdcard_inode_event,
+};
+
+static int add_mark_on_inode(struct inode *inode, u32 mask,
+								struct fsnotify_mark **out)
+{
+	struct fsnotify_mark *m;
+
+	m = kzalloc(sizeof(*m), GFP_KERNEL);
+	if (!m)
+		return -ENOMEM;
+
+	fsnotify_init_mark(m, g);
+	m->mask = mask;
+
+	if (fsnotify_add_mark(m, inode, NULL, 0)) {
+		fsnotify_put_mark(m);
+		return -EINVAL;
+	}
+	*out = m;
+	return 0;
+}
+
+static int susfs_sdcard_monitor_fn(void *data)
+{
+	struct cred *cred = prepare_creds();
+	int ret = 0;
+
+	if (!cred) {
+		SUSFS_LOGE("failed to prepare creds!\n");
+		return -ENOMEM;
+	}
+
+	setup_selinux("u:r:su:s0", cred);
+	commit_creds(cred);
+
+	if (!susfs_is_current_ksu_domain()) {
+		SUSFS_LOGE("domain is not su, exiting the thread\n");
+		return -EINVAL;
+	}
+
+	SUSFS_LOGI("start monitoring path '%s' using fsnotify\n",
+				SDCARD_ANDROID_DATA_PATH);
+
+	INIT_DELAYED_WORK(&sdcard_cleanup_dwork, susfs_sdcard_cleanup_fn);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+	g = fsnotify_alloc_group(&fsnotify_ops, 0);
+#else
+	g = fsnotify_alloc_group(&fsnotify_ops);
+#endif
+	if (IS_ERR(g)) {
+		return PTR_ERR(g);
+	}
+
+	ret = watch_one_dir(&g_watch);
+
+	SUSFS_LOGI("ret: %d\n", ret);
+
+	return 0;
+}
+
+void susfs_start_sdcard_monitor_fn(void) {
+	if (IS_ERR(kthread_run(susfs_sdcard_monitor_fn, NULL, "susfs_sdcard_monitor"))) {
+		SUSFS_LOGE("failed to create thread susfs_sdcard_monitor\n");
+		SUSFS_LOGI("set susfs_is_sdcard_android_data_decrypted to true\n");
+		susfs_is_sdcard_android_data_decrypted = true;
+	}
+}
+
 
 /* susfs_init */
 void susfs_init(void) {
