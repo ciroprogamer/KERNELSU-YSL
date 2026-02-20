@@ -30,8 +30,19 @@ obj-$(CONFIG_KSU) += kernelsu.o
 LPATH := /usr/bin/env PATH="$$PATH":/usr/bin:/usr/local/bin
 MDIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-# Check if this is a git repository
-# Try to detect Git repo intelligently
+# ---------------------------------------------------------------------------
+# Hardcoded version override (non-git build)
+# Source: git describe --tags --abbrev=0  => v3.0.1-legacy
+#         git rev-list --count HEAD       => 2902
+#         KSU_VERSION = 30000 + 2902 + 94 => 32996
+# ---------------------------------------------------------------------------
+KSU_GIT_VERSION      := 2902
+KSU_GIT_TAG          := v3.0.1-legacy
+KSU_GIT_VERSION_VALID := 1
+# ---------------------------------------------------------------------------
+
+# Check if this is a git repository (skipped when version is hardcoded above)
+ifndef KSU_GIT_VERSION_VALID
 GIT_ROOT := $(shell cd $(MDIR) && $(LPATH) git rev-parse --show-toplevel 2>/dev/null)
 ifneq ($(GIT_ROOT),)
 KERNEL_GIT_ROOT := $(shell cd $(srctree) && $(LPATH) git rev-parse --show-toplevel 2>/dev/null)
@@ -44,6 +55,7 @@ KSU_GIT_VERSION_VALID := 1
 $(info -- KernelSU-Next Git repo detected at: $(GIT_ROOT))
 endif
 endif
+endif # KSU_GIT_VERSION_VALID
 
 # Calculate version if git version is available
 ifdef KSU_GIT_VERSION_VALID

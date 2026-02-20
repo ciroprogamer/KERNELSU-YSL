@@ -3,8 +3,8 @@ make[1]: Entering directory '/home/ciro/kernel_xiaomi_ysl/out'
   CHK     include/config/kernel.release
   GEN     ./Makefile
   CHK     include/generated/uapi/linux/version.h
-  CHK     include/generated/utsrelease.h
   Using .. as source for kernel
+  CHK     include/generated/utsrelease.h
   CHK     scripts/mod/devicetable-offsets.h
   CHK     include/generated/timeconst.h
   CHK     include/generated/bounds.h
@@ -12,20 +12,41 @@ make[1]: Entering directory '/home/ciro/kernel_xiaomi_ysl/out'
   CALL    ../scripts/checksyscalls.sh
   CHK     include/generated/compile.h
   CHK     kernel/config_data.h
--- KernelSU-Next Git repo detected at: /home/ciro/kernel_xiaomi_ysl/KernelSU-Next
--- KernelSU-Next version: 32976
+-- KernelSU-Next version: 32996
 -- KernelSU-Next tag: v3.0.1-legacy
 -- KernelSU-Next Manager signature size: 0x3e6
 -- KernelSU-Next Manager signature hash: 79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7
 -- KernelSU-Next: Hook mode: Manual
 
 -- SUSFS_VERSION: v2.0.0
-  CC      drivers/md/dm-verity-target.o
-  LD      drivers/md/dm-verity.o
-  LD      drivers/md/built-in.o
-  LD      drivers/built-in.o
+  CC      drivers/kernelsu/ksu.o
+  CC      drivers/kernelsu/allowlist.o
+  CC      drivers/kernelsu/app_profile.o
+  CC      drivers/kernelsu/apk_sign.o
+  CC      drivers/kernelsu/sucompat.o
+  CC      drivers/kernelsu/syscall_hook_manager.o
+  CC      drivers/kernelsu/throne_tracker.o
+  CC      drivers/kernelsu/pkg_observer.o
+  CC      drivers/kernelsu/setuid_hook.o
+  CC      drivers/kernelsu/lsm_hooks.o
+  CC      drivers/kernelsu/kernel_compat.o
+  CC      drivers/kernelsu/kernel_umount.o
+  CC      drivers/kernelsu/supercalls.o
+  CC      drivers/kernelsu/su_mount_ns.o
+  CC      drivers/kernelsu/feature.o
   CC      techpack/audio/ipc/apr.o
+  CC      drivers/kernelsu/ksud.o
+  CC      drivers/kernelsu/seccomp_cache.o
+  CC      drivers/kernelsu/file_wrapper.o
+  CC      drivers/kernelsu/util.o
+  CC      drivers/kernelsu/extras.o
+  CC      drivers/kernelsu/selinux/selinux.o
+  CC      drivers/kernelsu/selinux/sepolicy.o
+  CC      drivers/kernelsu/selinux/rules.o
+  LD      drivers/kernelsu/kernelsu.o
+  LD      drivers/kernelsu/built-in.o
   CC      techpack/audio/ipc/apr_v2.o
+  LD      drivers/built-in.o
   CC      techpack/audio/ipc/apr_tal.o
   CC      techpack/audio/ipc/apr_dummy.o
   CC      techpack/audio/ipc/wcd-dsp-glink.o
