@@ -12,7 +12,6 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/utsname.h> // utsname() and uts_sem
-
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/namei.h>
 #include <linux/susfs.h>
@@ -129,9 +128,9 @@ static int do_report_event(void __user *arg)
 			boot_complete_lock = true;
 			pr_info("boot_complete triggered\n");
 			on_boot_completed();
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-            susfs_is_boot_completed_triggered = true;
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#ifdef CONFIG_KSU_SUSFS
+            susfs_start_sdcard_monitor_fn();
+#endif // #ifdef CONFIG_KSU_SUSFS
 		}
 		break;
 	}
@@ -573,7 +572,7 @@ static int add_try_umount(void __user *arg)
             new_entry->umountable = kstrdup(buf, GFP_KERNEL);
             if (!new_entry->umountable) {
                 kfree(new_entry);
-                return -1;
+                return -ENOMEM;
             }
 
             down_write(&mount_list_lock);
@@ -586,7 +585,7 @@ static int add_try_umount(void __user *arg)
                     up_write(&mount_list_lock);
                     kfree(new_entry->umountable);
                     kfree(new_entry);
-                    return -1;
+                    return -EEXIST;
                 }
             }
 
@@ -727,7 +726,7 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
     if (magic2 == SUSFS_MAGIC && current_uid().val == 0) {
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
         if (cmd == CMD_SUSFS_ADD_SUS_PATH) {
-           susfs_add_sus_path(arg);
+            susfs_add_sus_path(arg);
             return 0;
         }
         if (cmd == CMD_SUSFS_ADD_SUS_PATH_LOOP) {
@@ -744,8 +743,8 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
         }
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-        if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS) {
-           susfs_set_hide_sus_mnts_for_all_procs(arg);
+        if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS) {
+            susfs_set_hide_sus_mnts_for_non_su_procs(arg);
             return 0;
         }
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
@@ -818,7 +817,6 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
         return 0;
     }
 #endif // #ifdef CONFIG_KSU_SUSFS
-
 	// Check if this is a request to install KSU fd
 	if (magic2 == KSU_INSTALL_MAGIC2) {
 		int fd = ksu_install_fd();
