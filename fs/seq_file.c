@@ -698,9 +698,6 @@ void seq_put_decimal_ull_width(struct seq_file *m, const char *delimiter,
 			seq_puts(m, delimiter);
 	}
 
-	memcpy(m->buf + m->count, delimiter, len);
-	m->count += len;
-
 	if (!width)
 		width = 1;
 

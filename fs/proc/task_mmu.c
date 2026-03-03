@@ -1001,26 +1001,6 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
 			goto bypass_orig_flow;
 		}
 #endif
-
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-	if (vma->vm_file &&
-		unlikely(file_inode(vma->vm_file)->i_state & BIT_SUS_MAPS) &&
-		susfs_is_current_proc_umounted())
-	{
-		show_map_vma(m, vma);
-		SEQ_PUT_DEC("Size:           ", vma->vm_end - vma->vm_start);
-		SEQ_PUT_DEC(" kB\nKernelPageSize: ", 4);
-		SEQ_PUT_DEC(" kB\nMMUPageSize:    ", 4);
-		seq_puts(m, " kB\n");
-		__show_smap(m, &mss, false);
-		if (arch_pkeys_enabled())
-				seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
-		seq_puts(m, "VmFlags: mr mw me");
-		seq_putc(m, '\n');
-		goto bypass_orig_flow;
-	}
-#endif
-
 		smap_gather_stats(vma, &mss);
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 bypass_orig_flow:
@@ -1700,7 +1680,6 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 			end = end_vaddr;
 		down_read(&mm->mmap_sem);
 		ret = walk_page_range(start_vaddr, end, &pagemap_walk);
-		up_read(&mm->mmap_sem);
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 		vma = find_vma(mm, start_vaddr);
 		if (vma && vma->vm_file) {
@@ -1711,6 +1690,7 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 			}
 		}
 #endif
+		up_read(&mm->mmap_sem);
 		start_vaddr = end;
 
 		len = min(count, PM_ENTRY_BYTES * pm.pos);
