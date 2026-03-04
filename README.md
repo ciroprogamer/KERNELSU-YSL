@@ -20,7 +20,7 @@ It works for me, BUT backup your boot partition(and soul) before using anything 
 
 ## Status
 
-Root,susfs & modules:  working(As far as I 
+Root,susfs & modules:  working(As far as I tested)
 
 ## License And Credits
 This project is licensed under **GPL-2.0**).
