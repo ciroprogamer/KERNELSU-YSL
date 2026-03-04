@@ -1,3 +1,4 @@
+#include <linux/fsnotify_compat.h>
 #include <linux/version.h>
 #include <linux/cred.h>
 #include <linux/fs.h>
@@ -15,9 +16,10 @@
 #include <linux/fdtable.h>
 #include <linux/statfs.h>
 #include <linux/random.h>
+#include <linux/kthread.h>
+#include <linux/delay.h>
 #include <linux/delay.h>
 #include <linux/fsnotify_backend.h>
-#include <linux/kthread.h>
 #include <linux/susfs.h>
 #include "mount.h"
 
@@ -428,7 +430,7 @@ void susfs_add_sus_kstat(void __user **user_info) {
 	struct st_susfs_sus_kstat info = {0};
 	struct st_susfs_sus_kstat_hlist *new_entry;
 
-		if (copy_from_user(&info, (struct st_susfs_sus_kstat __user *)*user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_sus_kstat __user*)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -485,7 +487,7 @@ void susfs_add_sus_kstat(void __user **user_info) {
 #endif
 	info.err = 0;
 out_copy_to_user:
-		if (copy_to_user(&((struct st_susfs_sus_kstat __user *)*user_info)->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_sus_kstat __user*)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	if (!info.is_statically) {
@@ -501,7 +503,7 @@ void susfs_update_sus_kstat(void __user **user_info) {
 	struct hlist_node *tmp_node;
 	int bkt;
 
-	if (copy_from_user(&info, (struct st_susfs_sus_kstat __user *)*user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_sus_kstat __user*)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -542,7 +544,7 @@ void susfs_update_sus_kstat(void __user **user_info) {
 		}
 	}
 out_copy_to_user:
-	if (copy_to_user(&((struct st_susfs_sus_kstat __user *)*user_info)->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_sus_kstat __user*)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_UPDATE_SUS_KSTAT -> ret: %d\n", info.err);
@@ -636,7 +638,6 @@ void susfs_try_umount(uid_t uid) {
 		try_umount(cursor->info.target_pathname, cursor->info.mnt_mode);
 	}
 }
-
 #endif // #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
 
 /* spoof_uname */
@@ -648,7 +649,7 @@ static DEFINE_SEQLOCK(susfs_uname_seqlock);
 void susfs_set_uname(void __user **user_info) {
 	struct st_susfs_uname info = {0};
 
-	if (copy_from_user(&info, (struct st_susfs_uname __user *)*user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_uname __user*)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -675,7 +676,7 @@ void susfs_set_uname(void __user **user_info) {
 				my_uname.release, my_uname.version);
 	info.err = 0;
 out_copy_to_user:
-	if (copy_to_user(&((struct st_susfs_uname __user *)*user_info)->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_uname __user*)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_SET_UNAME -> ret: %d\n", info.err);
@@ -731,13 +732,11 @@ void susfs_set_cmdline_or_bootconfig(void __user **user_info) {
 	struct st_susfs_spoof_cmdline_or_bootconfig *info = (struct st_susfs_spoof_cmdline_or_bootconfig *)kzalloc(sizeof(struct st_susfs_spoof_cmdline_or_bootconfig), GFP_KERNEL);
 	
 	if (!info) {
-		struct st_susfs_spoof_cmdline_or_bootconfig temp_info = {0};
-		temp_info.err = -ENOMEM;
-		copy_to_user(&((struct st_susfs_spoof_cmdline_or_bootconfig __user *)*user_info)->err, &temp_info.err, sizeof(temp_info.err));
-		return;
+		info->err = -ENOMEM;
+		goto out_copy_to_user;
 	}
 
-	if (copy_from_user(info, (struct st_susfs_spoof_cmdline_or_bootconfig __user *)*user_info, sizeof(struct st_susfs_spoof_cmdline_or_bootconfig))) {
+	if (copy_from_user(info, (struct st_susfs_spoof_cmdline_or_bootconfig __user*)*user_info, sizeof(struct st_susfs_spoof_cmdline_or_bootconfig))) {
 		info->err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -764,7 +763,7 @@ void susfs_set_cmdline_or_bootconfig(void __user **user_info) {
 	SUSFS_LOGI("fake_cmdline_or_bootconfig is set\n");
 	info->err = 0;
 out_copy_to_user:
-	if (copy_to_user(&((struct st_susfs_spoof_cmdline_or_bootconfig __user *)*user_info)->err, &info->err, sizeof(info->err))) {
+	if (copy_to_user(&((struct st_susfs_spoof_cmdline_or_bootconfig __user*)*user_info)->err, &info->err, sizeof(info->err))) {
 		info->err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG -> ret: %d\n", info->err);
@@ -825,7 +824,7 @@ void susfs_add_open_redirect(void __user **user_info) {
 	struct st_susfs_open_redirect info = {0};
 	struct st_susfs_open_redirect_hlist *new_entry;
 
-	if (copy_from_user(&info, (struct st_susfs_open_redirect __user *)*user_info, sizeof(info))) {
+	if (copy_from_user(&info, (struct st_susfs_open_redirect __user*)*user_info, sizeof(info))) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
@@ -853,7 +852,7 @@ void susfs_add_open_redirect(void __user **user_info) {
 			new_entry->target_ino, new_entry->target_pathname, new_entry->redirected_pathname);
 	info.err = 0;
 out_copy_to_user:
-	if (copy_to_user(&((struct st_susfs_open_redirect __user *)*user_info)->err, &info.err, sizeof(info.err))) {
+	if (copy_to_user(&((struct st_susfs_open_redirect __user*)*user_info)->err, &info.err, sizeof(info.err))) {
 		info.err = -EFAULT;
 	}
 	SUSFS_LOGI("CMD_SUSFS_ADD_OPEN_REDIRECT -> ret: %d\n", info.err);
@@ -1079,8 +1078,6 @@ static struct fsnotify_group *g;
 static struct watch_dir g_watch = { .path = "/data/media/0", // we choose the underlying f2fs /data/media/0 instead of the FUSE /sdcard
 									.mask = (FS_EVENT_ON_CHILD | FS_ISDIR | FS_OPEN_PERM) };
 
-static void susfs_free_mark(struct fsnotify_mark *mark) { kfree(mark); }
-
 static int add_mark_on_inode(struct inode *inode, u32 mask,
 								struct fsnotify_mark **out);
 
@@ -1144,8 +1141,9 @@ static int susfs_handle_sdcard_inode_event(struct fsnotify_group *group,
 											struct inode *to_tell,
 											struct fsnotify_mark *inode_mark,
 											struct fsnotify_mark *vfsmount_mark,
-											u32 mask, void *data, int data_type,
-											const unsigned char *file_name, u32 cookie)
+											u32 mask, const void *data, int data_type,
+											const unsigned char *file_name, u32 cookie,
+											struct fsnotify_iter_info *iter_info)
 {
 	if (!file_name || strlen(file_name) != 7 ||
 	    memcmp(file_name, "Android", 7))
@@ -1172,10 +1170,10 @@ static int add_mark_on_inode(struct inode *inode, u32 mask,
 	if (!m)
 		return -ENOMEM;
 
-	fsnotify_init_mark(m, susfs_free_mark);
+	fsnotify_init_mark(m, g);
 	m->mask = mask;
 
-	if (fsnotify_add_mark(m, g, inode, NULL, 0)) {
+	if (fsnotify_add_mark(m, inode, NULL, 0)) {
 		fsnotify_put_mark(m);
 		return -EINVAL;
 	}
