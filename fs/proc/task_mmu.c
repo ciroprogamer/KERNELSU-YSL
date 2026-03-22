@@ -578,7 +578,6 @@ static void smaps_account(struct mem_size_stats *mss, struct page *page,
 	if (young || page_is_young(page) || PageReferenced(page))
 		mss->referenced += size;
 
-	bypass:
 	/*
 	 * page_count(page) == 1 guarantees the page is mapped exactly once.
 	 * If any subpage of the compound page mapped with PTE it would elevate

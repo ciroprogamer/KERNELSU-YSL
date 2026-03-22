@@ -126,3 +126,6 @@ out/
 build.log
 *.rej
 *.orig
+*.diff
+*.patch
+*.log
