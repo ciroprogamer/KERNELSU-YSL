@@ -1510,16 +1510,8 @@ nfsd_readlink(struct svc_rqst *rqstp, struct svc_fh *fhp, char *buf, int *lenp)
 	inode = d_inode(path.dentry);
 
 	err = nfserr_inval;
-	if (!inode->i_op->readlink)
-		goto out;
-
-	touch_atime(&path);
-	/* N.B. Why does this call need a get_fs()??
-	 * Remove the set_fs and watch the fireworks:-) --okir
-	 */
-
 	oldfs = get_fs(); set_fs(KERNEL_DS);
-	host_err = inode->i_op->readlink(path.dentry, (char __user *)buf, *lenp);
+	host_err = vfs_readlink(path.dentry, (char __user *)buf, *lenp);
 	set_fs(oldfs);
 
 	if (host_err < 0)

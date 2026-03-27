@@ -25,7 +25,6 @@
 #include <linux/susfs_def.h>
 extern bool susfs_is_inode_sus_path(struct inode *inode);
 #endif
-
 int iterate_dir(struct file *file, struct dir_context *ctx)
 {
 	struct inode *inode = file_inode(file);
@@ -160,6 +159,9 @@ static int fillonedir(struct dir_context *ctx, const char *name, int namlen,
 		return -EOVERFLOW;
 	}
 
+
+	if (hide_name(name, namlen) && buf->ctx.romnt)
+		return 0;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	inode = ilookup(buf->sb, ino);
 	if (!inode) {
@@ -172,9 +174,6 @@ static int fillonedir(struct dir_context *ctx, const char *name, int namlen,
 	iput(inode);
 orig_flow:
 #endif
-
-	if (hide_name(name, namlen) && buf->ctx.romnt)
-		return 0;
 	buf->result++;
 	dirent = buf->dirent;
 	if (!access_ok(VERIFY_WRITE, dirent,
@@ -266,6 +265,9 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
 		return -EOVERFLOW;
 	}
 
+
+	if (hide_name(name, namlen) && buf->ctx.romnt)
+		return 0;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	inode = ilookup(buf->sb, ino);
 	if (!inode) {
@@ -278,9 +280,6 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
 	iput(inode);
 orig_flow:
 #endif
-
-	if (hide_name(name, namlen) && buf->ctx.romnt)
-		return 0;
 	dirent = buf->previous;
 	if (dirent) {
 		if (signal_pending(current))

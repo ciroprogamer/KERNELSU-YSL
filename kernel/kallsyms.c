@@ -641,8 +641,8 @@ static int s_show(struct seq_file *m, void *p)
 
 			return 0;
 		}
-		seq_printf(m, "%pK %c %s\n", (void *)iter->value,
-			   iter->type, iter->name);
+ 		seq_printf(m, "%pK %c %s\n", (void *)iter->value,
+ 			   iter->type, iter->name);
 	}
 #endif
 	return 0;

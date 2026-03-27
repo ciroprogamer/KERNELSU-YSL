@@ -38,10 +38,10 @@
 #include <linux/bitops.h>
 #include <linux/init_task.h>
 #include <asm/uaccess.h>
-
 #if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 #include <linux/susfs_def.h>
 #endif
+
 
 #include "internal.h"
 #include "mount.h"
@@ -53,6 +53,7 @@
 extern bool susfs_is_inode_sus_path(struct inode *inode);
 extern const struct qstr susfs_fake_qstr_name;
 #endif
+
 
 /* [Feb-1997 T. Schoebel-Theuer]
  * Fundamental changes in the pathname lookup mechanisms (namei)
@@ -1622,33 +1623,31 @@ static int follow_dotdot(struct nameidata *nd)
  * NULL is returned if the dentry does not exist in the cache.
  */
 static struct dentry *lookup_dcache(const struct qstr *name,
-				    struct dentry *dir,
-				    unsigned int flags)
+                    struct dentry *dir,
+                    unsigned int flags)
 {
-	struct dentry *dentry;
-	int error;
-
-	dentry = d_lookup(dir, name);
-	if (dentry) {
-		if (dentry->d_flags & DCACHE_OP_REVALIDATE) {
-			error = d_revalidate(dentry, flags);
-			if (unlikely(error <= 0)) {
-				if (!error)
-					d_invalidate(dentry);
-				dput(dentry);
-				return ERR_PTR(error);
-			}
-		}
-	}
+    struct dentry *dentry = d_lookup(dir, name);
+    if (dentry) {
+        if (dentry->d_flags & DCACHE_OP_REVALIDATE) {
+            int error = d_revalidate(dentry, flags);
+            if (unlikely(error <= 0)) {
+                if (!error)
+                    d_invalidate(dentry);
+                dput(dentry);
+                return ERR_PTR(error);
+            }
+        }
+    }
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (dentry && !IS_ERR(dentry) && dentry->d_inode && susfs_is_inode_sus_path(dentry->d_inode)) {
-		if (d_in_lookup(dentry))
-			d_lookup_done(dentry);
-		dput(dentry);
-		return NULL;
-	}
+    if (dentry && !IS_ERR(dentry) && dentry->d_inode &&
+        susfs_is_inode_sus_path(dentry->d_inode)) {
+        if (d_in_lookup(dentry))
+            d_lookup_done(dentry);
+        dput(dentry);
+        return NULL;
+    }
 #endif
-	return dentry;
+    return dentry;
 }
 
 /*
@@ -1785,16 +1784,14 @@ static int lookup_fast(struct nameidata *nd,
 		}
 	} else {
 		dentry = __d_lookup(parent, &nd->last);
-		
-		#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 		if (is_nd_state_lookup_last_and_open_last && dentry && !IS_ERR(dentry) && dentry->d_inode && susfs_is_inode_sus_path(dentry->d_inode)) {
 				if (d_in_lookup(dentry))
 					d_lookup_done(dentry);
-						dput(dentry);
+				dput(dentry);
 				dentry = NULL;
-				}
-		#endif
-		
+		}
+#endif
 		if (unlikely(!dentry))
 			return 0;
 		if (unlikely(dentry->d_flags & DCACHE_OP_REVALIDATE))
@@ -1831,7 +1828,6 @@ static struct dentry *lookup_slow(const struct qstr *name,
 	bool found_sus_path = false;
 	bool is_nd_flags_lookup_last = (flags & ND_FLAGS_LOOKUP_LAST);
 #endif
-
 	inode_lock_shared(inode);
 	/* Don't go there if it's already dead */
 	if (unlikely(IS_DEADDIR(inode)))
@@ -1851,15 +1847,15 @@ retry:
 				if (!error) {
 					d_invalidate(dentry);
 					dput(dentry);
+					goto again;
+				}
+				dput(dentry);
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 				if (found_sus_path) {
 					dentry = d_alloc_parallel(dir, &susfs_fake_qstr_name, &wq);
 					goto retry;
 				}
 #endif
-					goto again;
-				}
-				dput(dentry);
 				dentry = ERR_PTR(error);
 			}
 		}
@@ -2488,11 +2484,9 @@ static inline int lookup_last(struct nameidata *nd)
 {
 	if (nd->last_type == LAST_NORM && nd->last.name[nd->last.len])
 		nd->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
-
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	nd->state |= ND_STATE_LOOKUP_LAST;
 #endif
-
 	nd->flags &= ~LOOKUP_PARENT;
 	return walk_component(nd,
 			nd->flags & LOOKUP_FOLLOW
@@ -3837,20 +3831,12 @@ out2:
 	return file;
 }
 
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-extern struct filename* susfs_get_redirected_path(unsigned long ino);
-struct inode *inode;
-#endif
-
 struct file *do_filp_open(int dfd, struct filename *pathname,
 		const struct open_flags *op)
 {
 	struct nameidata nd;
 	int flags = op->lookup_flags;
 	struct file *filp;
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-	struct filename *fake_pathname;
-#endif
 
 	set_nameidata(&nd, dfd, pathname);
 	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
@@ -3858,25 +3844,6 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 		filp = path_openat(&nd, op, flags);
 	if (unlikely(filp == ERR_PTR(-ESTALE)))
 		filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-	if (!IS_ERR(filp) && unlikely(filp->f_inode->i_mapping->flags & BIT_OPEN_REDIRECT) && current_uid().val < 11000) {
-		fake_pathname = susfs_get_redirected_path(filp->f_inode->i_ino);
-		if (!IS_ERR(fake_pathname)) {
-			restore_nameidata();
-			filp_close(filp, NULL);
-			// no need to do `putname(pathname);` here as it will be done by calling process
-			set_nameidata(&nd, dfd, fake_pathname);
-			filp = path_openat(&nd, op, flags | LOOKUP_RCU);
-			if (unlikely(filp == ERR_PTR(-ECHILD)))
-				filp = path_openat(&nd, op, flags);
-			if (unlikely(filp == ERR_PTR(-ESTALE)))
-				filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
-			restore_nameidata();
-			putname(fake_pathname);
-			return filp;
-		}
-	}
-#endif
 	restore_nameidata();
 	return filp;
 }
@@ -5045,6 +5012,9 @@ out:
  * have ->get_link() not calling nd_jump_link().  Using (or not using) it
  * for any given inode is up to filesystem.
  */
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+extern int susfs_open_redirect_spoof_vfs_readlink(struct inode *inode, char __user *buffer, int buflen);
+#endif
 int generic_readlink(struct dentry *dentry, char __user *buffer, int buflen)
 {
 	DEFINE_DELAYED_CALL(done);
@@ -5059,11 +5029,63 @@ int generic_readlink(struct dentry *dentry, char __user *buffer, int buflen)
 		if (IS_ERR(link))
 			return PTR_ERR(link);
 	}
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+		res = susfs_open_redirect_spoof_vfs_readlink(inode, buffer, buflen);
+		if (!res) {
+			do_delayed_call(&done);
+			return res;
+		}
+	}
+#endif
 	res = readlink_copy(buffer, buflen, link);
 	do_delayed_call(&done);
 	return res;
 }
-EXPORT_SYMBOL(generic_readlink);
+
+/**
+ * vfs_readlink - copy symlink body into userspace buffer
+ * @dentry: dentry on which to get symbolic link
+ * @buffer: user memory pointer
+ * @buflen: size of buffer
+ *
+ * Does not touch atime.  That's up to the caller if necessary
+ *
+ * Does not call security hook.
+ */
+int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+{
+	struct inode *inode = d_inode(dentry);
+
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	int res;
+#endif
+
+	if (unlikely(!(inode->i_opflags & IOP_DEFAULT_READLINK))) {
+		if (unlikely(inode->i_op->readlink))
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+		{
+			if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+				res = susfs_open_redirect_spoof_vfs_readlink(inode, buffer, buflen);
+				if (!res)
+					return res;
+			}
+			return inode->i_op->readlink(dentry, buffer, buflen);
+		}
+#else
+			return inode->i_op->readlink(dentry, buffer, buflen);
+#endif
+
+		if (!d_is_symlink(dentry))
+			return -EINVAL;
+		spin_lock(&inode->i_lock);
+		inode->i_opflags |= IOP_DEFAULT_READLINK;
+		spin_unlock(&inode->i_lock);
+	}
+
+	return generic_readlink(dentry, buffer, buflen);
+}
+EXPORT_SYMBOL(vfs_readlink);
 
 /**
  * vfs_get_link - get symlink body
@@ -5180,7 +5202,6 @@ int page_symlink(struct inode *inode, const char *symname, int len)
 EXPORT_SYMBOL(page_symlink);
 
 const struct inode_operations page_symlink_inode_operations = {
-	.readlink	= generic_readlink,
 	.get_link	= page_get_link,
 };
 EXPORT_SYMBOL(page_symlink_inode_operations);

@@ -648,9 +648,7 @@ static char *ecryptfs_readlink_lower(struct dentry *dentry, size_t *bufsiz)
 		return ERR_PTR(-ENOMEM);
 	old_fs = get_fs();
 	set_fs(get_ds());
-	rc = d_inode(lower_dentry)->i_op->readlink(lower_dentry,
-						   (char __user *)lower_buf,
-						   PATH_MAX);
+	rc = vfs_readlink(lower_dentry, (char __user *)lower_buf, PATH_MAX);
 	set_fs(old_fs);
 	if (rc < 0)
 		goto out;
@@ -1095,7 +1093,6 @@ out:
 }
 
 const struct inode_operations ecryptfs_symlink_iops = {
-	.readlink = generic_readlink,
 	.get_link = ecryptfs_get_link,
 	.permission = ecryptfs_permission,
 	.setattr = ecryptfs_setattr,

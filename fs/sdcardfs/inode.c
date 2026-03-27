@@ -489,14 +489,7 @@ static int sdcardfs_readlink(struct dentry *dentry, char __user *buf, int bufsiz
 
 	sdcardfs_get_lower_path(dentry, &lower_path);
 	lower_dentry = lower_path.dentry;
-	if (!d_inode(lower_dentry)->i_op ||
-	    !d_inode(lower_dentry)->i_op->readlink) {
-		err = -EINVAL;
-		goto out;
-	}
-
-	err = d_inode(lower_dentry)->i_op->readlink(lower_dentry,
-						    buf, bufsiz);
+	err = vfs_readlink(lower_dentry, buf, bufsiz);
 	if (err < 0)
 		goto out;
 	fsstack_copy_attr_atime(d_inode(dentry), d_inode(lower_dentry));

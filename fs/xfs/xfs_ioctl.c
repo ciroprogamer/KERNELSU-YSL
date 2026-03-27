@@ -287,17 +287,7 @@ xfs_readlink_by_handle(
 		return PTR_ERR(dentry);
 
 	/* Restrict this handle operation to symlinks only. */
-	if (!d_inode(dentry)->i_op->readlink) {
-		error = -EINVAL;
-		goto out_dput;
-	}
-
-	if (copy_from_user(&olen, hreq->ohandlen, sizeof(__u32))) {
-		error = -EFAULT;
-		goto out_dput;
-	}
-
-	error = d_inode(dentry)->i_op->readlink(dentry, hreq->ohandle, olen);
+error = vfs_readlink(dentry, hreq->ohandle, olen);
 
  out_dput:
 	dput(dentry);

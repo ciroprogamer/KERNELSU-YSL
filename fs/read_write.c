@@ -582,19 +582,20 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 }
 
 #ifdef CONFIG_KSU
-extern void ksu_handle_sys_read(unsigned int fd);
+extern bool ksu_vfs_read_hook __read_mostly;
+extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd,
+				char __user **buf_ptr, size_t *count_ptr);
 #endif
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	struct fd f;           // ← Declare at top
-	ssize_t ret = -EBADF;  // ← Declare at top
-	
-	#ifdef CONFIG_KSU
-		ksu_handle_sys_read(fd);  // ← ADD THIS LINE
-	#endif
-	
-	f = fdget_pos(fd);  // ← Initialize here instead
+	struct fd f = fdget_pos(fd);
+	ssize_t ret = -EBADF;
+
+#ifdef CONFIG_KSU
+	if (unlikely(ksu_vfs_read_hook)) 
+		ksu_handle_sys_read(fd, &buf, &count);
+#endif
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);

@@ -10,7 +10,6 @@
 #include <linux/nsproxy.h>
 #include <linux/security.h>
 #include <linux/fs_struct.h>
-
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 #include <linux/susfs_def.h>
 #endif
@@ -110,10 +109,12 @@ static int show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
 	int err;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-		if (READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs) &&
-				r->mnt_id >= DEFAULT_KSU_MNT_ID &&
-				!susfs_is_current_ksu_domain())
-		return SEQ_SKIP;
+	if (READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs) &&
+			r->mnt_id >= DEFAULT_KSU_MNT_ID &&
+			!susfs_is_current_ksu_domain())
+	{
+		return 0;
+	}
 #endif
 
 	if (sb->s_op->show_devname) {
@@ -152,12 +153,6 @@ static int show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
 	int err;
 
-	#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs) &&
-				r->mnt_id >= DEFAULT_KSU_MNT_ID &&
-				!susfs_is_current_ksu_domain())
-		return SEQ_SKIP;
-	#endif
 
 	seq_printf(m, "%i %i %u:%u ", r->mnt_id, r->mnt_parent->mnt_id,
 		   MAJOR(sb->s_dev), MINOR(sb->s_dev));
@@ -225,8 +220,8 @@ static int show_vfsstat(struct seq_file *m, struct vfsmount *mnt)
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	if (READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs) &&
-				r->mnt_id >= DEFAULT_KSU_MNT_ID &&
-				!susfs_is_current_ksu_domain())
+			r->mnt_id >= DEFAULT_KSU_MNT_ID &&
+			!susfs_is_current_ksu_domain())
 	{
 		return 0;
 	}

@@ -20,6 +20,8 @@
  *  │  - no iter_info arg         │ #define fsnotify_ops __fsnotify_ops_compat  │
  *  │                             │ Memory layout is identical; the kernel can │
  *  │                             │ use a pointer to our struct transparently. │
+ *  │                             │ A BUILD_BUG_ON enforces this at compile    │
+ *  │                             │ time (see section 2b).                     │
  *  │                             │ iter_info is always NULL at runtime on 4.9 │
  *  │                             │ so callers that guard with NULL-check are  │
  *  │                             │ safe; callers that ignore it are also safe.│
@@ -32,8 +34,8 @@
  *  │   inode, mnt, allow_dups)   │ Re-injects the group saved by init_mark.   │
  *  │ vs 4.9: (mark, group, ...)  │                                            │
  *  ├─────────────────────────────┼────────────────────────────────────────────┤
- *  │ -Wmissing-braces on {0}     │ Suppressed for the including file via      │
- *  │ struct initialisers         │ #pragma GCC diagnostic ignored             │
+ *  │ -Wmissing-braces on {0}     │ Suppressed with push/pop scoped to the     │
+ *  │ struct initialisers         │ including file only (not globally).        │
  *  └─────────────────────────────┴────────────────────────────────────────────┘
  */
 
@@ -44,14 +46,17 @@
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 9, 999)
 
+#include <linux/bug.h>
 #include <linux/fsnotify_backend.h>
+#include <linux/string.h>
 
 /* =========================================================================
  * 1. struct fsnotify_iter_info — stub
  *
  * This struct was introduced after 4.9.  We define an empty stub here so
  * that any function with it in its signature compiles.  At runtime on this
- * kernel, every pointer to this type will be NULL; always guard before use.
+ * kernel, every pointer to this type will be NULL (guaranteed by the
+ * trampoline in section 2b); always guard before use.
  * ====================================================================== */
 struct fsnotify_iter_info {
 	/* 4.9 stub — no fields */
@@ -84,15 +89,11 @@ fsnotify_iter_should_report_type(struct fsnotify_iter_info *i, int t) { return 1
  * define a new struct with identical field names and layout, and redirect
  * all uses to it via macro.  Because the only difference is the pointed-to
  * function type — not the pointer width — the memory layout is byte-for-byte
- * identical.  The kernel holds a `struct fsnotify_ops *` and calls
- * ops->handle_event(...) using the old 9-arg type; it reaches our struct
- * through a compatible pointer and invokes the correct function.
+ * identical.  A BUILD_BUG_ON in section 2b verifies this at compile time so
+ * that any future 4.9.x point-release surprises are caught immediately.
  *
- * Note on iter_info at runtime: the 4.9 dispatch site calls handle_event
- * with 9 arguments.  Our function declares a 10th (iter_info).  On all
- * common ABI targets (ARM32, ARM64, x86_64) the 10th argument slot will
- * contain an indeterminate value — treat it exactly like NULL and never
- * dereference it without a NULL guard, which the new API already requires.
+ * Note on iter_info at runtime: the trampoline in section 2b ensures
+ * iter_info is ALWAYS NULL — never a garbage register value.
  * ====================================================================== */
 struct __fsnotify_ops_compat {
 	int (*handle_event)(struct fsnotify_group *group,
@@ -130,44 +131,64 @@ typedef struct fsnotify_ops __fsnotify_ops_real_t;
 /* =========================================================================
  * 2b. fsnotify_alloc_group(ops) + handle_event trampoline
  *
+ * All mutable compat state is centralised in one struct to make the
+ * coupling between init_mark, add_mark, and alloc_group explicit and to
+ * avoid bare globals scattered across the header.
+ *
  * THE RUNTIME PROBLEM
  * -------------------
  * The 4.9 kernel calls ops->handle_event with 9 arguments.  If we let the
- * kernel hold a pointer to susfs's new-API function (which declares 10
- * parameters), the 10th parameter (iter_info) receives whatever garbage
- * happens to be in that register at the call site.  If susfs ever reads
- * iter_info without a NULL guard, that is a crash.
+ * kernel hold a pointer to the new-API function (10 parameters), the 10th
+ * parameter (iter_info) receives whatever garbage happens to be in that
+ * register at the call site.  If the handler ever reads iter_info without a
+ * NULL guard, that is a crash.
  *
  * THE FIX: trampoline
  * -------------------
- * We never give the kernel a pointer to susfs's function directly.
+ * We never give the kernel a pointer to the user's function directly.
  * Instead we give it a pointer to __fsnotify_compat_trampoline, which has
  * the exact 4.9 signature (9 args, ABI-perfect).  The trampoline then
- * calls susfs's real function and explicitly passes NULL for iter_info.
+ * calls the real function and explicitly passes NULL for iter_info.
  *
  * This is enforced at fsnotify_alloc_group() time, which is the single
- * point where the ops struct crosses the boundary from our code into the
- * kernel.  Steps:
- *   1. Save susfs's new-API handle_event pointer.
+ * point where the ops struct crosses the boundary into the kernel.  Steps:
+ *   1. Save the new-API handle_event pointer into __fsnotify_compat_ctx.
  *   2. memcpy the compat ops into a real __fsnotify_ops_real_t (layouts
  *      are byte-identical; only the function pointer type differs).
+ *      A BUILD_BUG_ON verifies the sizes match at compile time.
  *   3. Overwrite handle_event in the real ops with the trampoline.
  *   4. Hand the patched real ops to the kernel.
  *
  * iter_info is now ALWAYS NULL — not garbage — on this kernel.
  * ====================================================================== */
 
-/* Step 1: storage for susfs's real new-API handle_event */
-static int (*__fsnotify_compat_real_handle_event)(
-	struct fsnotify_group *,
-	struct inode *,
-	struct fsnotify_mark *,
-	struct fsnotify_mark *,
-	u32, const void *, int,
-	const unsigned char *, u32,
-	struct fsnotify_iter_info *);
+/*
+ * Centralised compat context.
+ *
+ * NOTE ON THREAD SAFETY
+ * ---------------------
+ * This context is written once during setup (single-threaded kthread startup)
+ * and read-only thereafter.  If your driver ever calls fsnotify_alloc_group()
+ * or fsnotify_init_mark() from concurrent paths, you must add your own
+ * locking around those call sites; the compat layer itself intentionally
+ * stays lock-free to avoid pulling in spinlock overhead for the common case.
+ */
+struct __fsnotify_compat_ctx {
+	/* Saved by fsnotify_alloc_group; used by the trampoline */
+	int (*real_handle_event)(struct fsnotify_group *,
+				 struct inode *,
+				 struct fsnotify_mark *,
+				 struct fsnotify_mark *,
+				 u32, const void *, int,
+				 const unsigned char *, u32,
+				 struct fsnotify_iter_info *);
+	/* Saved by fsnotify_init_mark; consumed by fsnotify_add_mark */
+	struct fsnotify_group *group;
+};
 
-/* Step 2: trampoline — exact 4.9 ABI, calls real fn with NULL iter_info */
+static struct __fsnotify_compat_ctx __fsnotify_compat_ctx;
+
+/* Trampoline — exact 4.9 ABI, forwards to the real fn with NULL iter_info */
 static int
 __fsnotify_compat_trampoline(struct fsnotify_group *group,
 			     struct inode *inode,
@@ -180,31 +201,44 @@ __fsnotify_compat_trampoline(struct fsnotify_group *group,
 			     u32 cookie)
 {
 	/*
-	 * iter_info is explicitly NULL — never garbage.
-	 * data cast to const void * is safe: same representation, we are
-	 * only adding a qualifier.
+	 * iter_info is explicitly NULL — never a garbage register.
+	 * Casting data to const void * is safe: same representation,
+	 * only a qualifier is being added.
 	 */
-	return __fsnotify_compat_real_handle_event(
+	return __fsnotify_compat_ctx.real_handle_event(
 		group, inode, inode_mark, vfsmount_mark,
 		mask, (const void *)data, data_type,
 		file_name, cookie,
-		NULL);   /* <-- iter_info: guaranteed NULL, not a garbage register */
+		NULL);   /* <-- iter_info: guaranteed NULL */
 }
 
-/* Step 3+4: patched alloc_group */
 static inline struct fsnotify_group *
 __fsnotify_compat_alloc_group(const struct __fsnotify_ops_compat *compat_ops)
 {
 	/*
-	 * real_ops has the kernel's original fsnotify_ops layout.
-	 * memcpy is safe because the two structs are byte-identical
-	 * (every field is the same size; handle_event is a pointer in both).
+	 * Layout assertion: the two structs must be byte-identical so that
+	 * the memcpy below is a safe type-pun.  If a 4.9.x point release
+	 * ever adds a field to the real struct, this fires at build time.
+	 */
+	BUILD_BUG_ON(sizeof(struct __fsnotify_ops_compat) !=
+		     sizeof(__fsnotify_ops_real_t));
+
+	/*
+	 * real_ops is function-scoped static so its address is stable for
+	 * the lifetime of the kernel module.  Declared static here (not at
+	 * file scope) to keep it as close as possible to its only use site.
+	 *
+	 * IMPORTANT: if this header is ever included in more than one
+	 * translation unit, each TU gets its own copy of real_ops and
+	 * __fsnotify_compat_ctx (static inline semantics).  All call sites
+	 * must live in the same TU — enforce this by including the header
+	 * in exactly one .c file.
 	 */
 	static __fsnotify_ops_real_t real_ops;
 	memcpy(&real_ops, compat_ops, sizeof(real_ops));
 
-	/* Save susfs's handle_event, then install the trampoline */
-	__fsnotify_compat_real_handle_event = compat_ops->handle_event;
+	/* Save the new-API handler and install the trampoline in its place */
+	__fsnotify_compat_ctx.real_handle_event = compat_ops->handle_event;
 	real_ops.handle_event = __fsnotify_compat_trampoline;
 
 	return fsnotify_alloc_group(&real_ops);
@@ -220,23 +254,26 @@ __fsnotify_compat_alloc_group(const struct __fsnotify_ops_compat *compat_ops)
  * 4.9:  fsnotify_init_mark(mark, free_mark_fn)
  * New:  fsnotify_init_mark(mark, group)
  *
- * Save the group for use by fsnotify_add_mark below, then forward to the
- * real kernel function with a no-op free_mark callback.
+ * Save the group into the centralised context for use by fsnotify_add_mark,
+ * then forward to the real kernel function with a no-op free_mark callback.
  * ====================================================================== */
-static struct fsnotify_group *__fsnotify_compat_group;
-
 static inline void __fsnotify_compat_noop_free(struct fsnotify_mark *m) {}
 
 static inline void
 __fsnotify_compat_init_mark(struct fsnotify_mark *mark,
 			    struct fsnotify_group *group)
 {
-	__fsnotify_compat_group = group;
+	__fsnotify_compat_ctx.group = group;
 	fsnotify_init_mark(mark, __fsnotify_compat_noop_free);
 }
 
-#define fsnotify_init_mark(mark, group_or_fn) \
-	__fsnotify_compat_init_mark(mark, group_or_fn)
+/*
+ * The second argument must be a struct fsnotify_group *.
+ * The parameter is named 'group' (not 'group_or_fn') to make the
+ * expected type explicit and prevent silent mis-use on 4.9.
+ */
+#define fsnotify_init_mark(mark, group) \
+	__fsnotify_compat_init_mark(mark, group)
 
 
 /* =========================================================================
@@ -245,7 +282,7 @@ __fsnotify_compat_init_mark(struct fsnotify_mark *mark,
  * 4.9:  fsnotify_add_mark(mark, group, inode, mnt, allow_dups)
  * New:  fsnotify_add_mark(mark, inode, mnt, allow_dups)
  *
- * Re-inject the group saved by init_mark.
+ * Re-inject the group saved by init_mark via the centralised context.
  * ====================================================================== */
 static inline int
 __fsnotify_compat_add_mark(struct fsnotify_mark *mark,
@@ -253,7 +290,7 @@ __fsnotify_compat_add_mark(struct fsnotify_mark *mark,
 			   struct vfsmount *mnt,
 			   int allow_dups)
 {
-	return fsnotify_add_mark(mark, __fsnotify_compat_group,
+	return fsnotify_add_mark(mark, __fsnotify_compat_ctx.group,
 				 inode, mnt, allow_dups);
 }
 
@@ -263,10 +300,17 @@ __fsnotify_compat_add_mark(struct fsnotify_mark *mark,
 
 /* =========================================================================
  * 5. Suppress -Wmissing-braces for {0} struct initialisers
- *    Pushed here without a matching pop so it applies to the entire
- *    including translation unit after this point.
+ *
+ * Scoped with push/pop so the suppression applies only to this header's
+ * own declarations and does not leak into the rest of the including TU.
+ * If the including file also uses {0} initialisers and sees this warning,
+ * wrap those sites individually or switch to C99 designated initialisers.
  * ====================================================================== */
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-braces"
+/* (no declarations here that need the suppression — push/pop pair is the
+ *  template for any future struct init added to this header)            */
+#pragma GCC diagnostic pop
 
 #endif /* LINUX_VERSION_CODE <= 4.9 */
 #endif /* _FSNOTIFY_COMPAT_H */
