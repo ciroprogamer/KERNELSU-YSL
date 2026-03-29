@@ -1765,12 +1765,15 @@ static int qpnp_adc_tm_set_trip_temp(void *data, int low_temp, int high_temp)
 		}
 		adc_tm->low_thr = tm_config.high_thr_voltage;
 
-		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
-				ADC_TM_TRIP_HIGH_WARM,
-				THERMAL_TRIP_ACTIVATION_ENABLED);
-		if (rc) {
-			pr_err("adc-tm warm activation failed\n");
-			return rc;
+		/* If there is a pending workqueue, don't enable */
+		if (!(adc_tm->low_thr_triggered)) {
+			rc = qpnp_adc_tm_activate_trip_type(adc_tm,
+					ADC_TM_TRIP_HIGH_WARM,
+					THERMAL_TRIP_ACTIVATION_ENABLED);
+			if (rc) {
+				pr_err("adc-tm warm activation failed\n");
+				return rc;
+			}
 		}
 	} else {
 		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
@@ -1798,12 +1801,15 @@ static int qpnp_adc_tm_set_trip_temp(void *data, int low_temp, int high_temp)
 		}
 		adc_tm->high_thr = tm_config.low_thr_voltage;
 
-		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
-				ADC_TM_TRIP_LOW_COOL,
-				THERMAL_TRIP_ACTIVATION_ENABLED);
-		if (rc) {
-			pr_err("adc-tm cool activation failed\n");
-			return rc;
+		/* If there is a pending workqueue, don't enable */
+		if (!(adc_tm->high_thr_triggered)) {
+			rc = qpnp_adc_tm_activate_trip_type(adc_tm,
+					ADC_TM_TRIP_LOW_COOL,
+					THERMAL_TRIP_ACTIVATION_ENABLED);
+			if (rc) {
+				pr_err("adc-tm cool activation failed\n");
+				return rc;
+			}
 		}
 	} else {
 		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
@@ -1887,14 +1893,37 @@ static void notify_clients(struct qpnp_adc_tm_sensor *adc_tm)
 	}
 }
 
+static int qpnp_adc_read_temp(void *data, int *temp)
+{
+	struct qpnp_adc_tm_sensor *adc_tm_sensor = data;
+	struct qpnp_adc_tm_chip *chip = adc_tm_sensor->chip;
+	struct qpnp_vadc_result result;
+	int rc = 0;
+
+	rc = qpnp_vadc_read(chip->vadc_dev,
+				adc_tm_sensor->vadc_channel_num, &result);
+	if (rc)
+		return rc;
+
+	*temp = result.physical;
+
+	return rc;
+}
+
 static void notify_adc_tm_fn(struct work_struct *work)
 {
 	struct qpnp_adc_tm_sensor *adc_tm = container_of(work,
 		struct qpnp_adc_tm_sensor, work);
+	int temp;
+	int ret;
 
 	if (adc_tm->thermal_node) {
 		pr_debug("notifying uspace client\n");
-		of_thermal_handle_trip(adc_tm->tz_dev);
+		ret = qpnp_adc_read_temp(adc_tm, &temp);
+		if (ret)
+			of_thermal_handle_trip(adc_tm->tz_dev);
+		else
+			of_thermal_handle_trip_temp(adc_tm->tz_dev, temp);
 	} else {
 		if (adc_tm->scale_type == SCALE_RBATT_THERM)
 			notify_battery_therm(adc_tm);
@@ -2727,23 +2756,6 @@ static irqreturn_t qpnp_adc_tm_rc_thr_isr(int irq, void *data)
 	}
 
 	return IRQ_HANDLED;
-}
-
-static int qpnp_adc_read_temp(void *data, int *temp)
-{
-	struct qpnp_adc_tm_sensor *adc_tm_sensor = data;
-	struct qpnp_adc_tm_chip *chip = adc_tm_sensor->chip;
-	struct qpnp_vadc_result result;
-	int rc = 0;
-
-	rc = qpnp_vadc_read(chip->vadc_dev,
-				adc_tm_sensor->vadc_channel_num, &result);
-	if (rc)
-		return rc;
-
-	*temp = result.physical;
-
-	return rc;
 }
 
 static struct thermal_zone_of_device_ops qpnp_adc_tm_thermal_ops = {

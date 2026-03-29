@@ -11,6 +11,8 @@
 #include "sched.h"
 #include "tune.h"
 
+unsigned int sysctl_sched_cfs_boost __read_mostly;
+
 #ifdef CONFIG_CGROUP_SCHEDTUNE
 bool schedtune_initialized = false;
 #endif
@@ -215,9 +217,6 @@ struct schedtune {
 	/* Hint to bias scheduling of tasks on that SchedTune CGroup
 	 * towards idle CPUs */
 	int prefer_idle;
-
-	/* Hint to use iowait boost */
-	bool prefer_iowait;
 };
 
 static inline struct schedtune *css_st(struct cgroup_subsys_state *css)
@@ -244,7 +243,8 @@ static inline struct schedtune *parent_st(struct schedtune *st)
  * By default, system-wide boosting is disabled, i.e. no boosting is applied
  * to tasks which are not into a child control group.
  */
-static struct schedtune root_schedtune = {
+static struct schedtune
+root_schedtune = {
 	.boost	= 0,
 #ifdef CONFIG_SCHED_WALT
 	.sched_boost_no_override = false,
@@ -256,7 +256,6 @@ static struct schedtune root_schedtune = {
 	.perf_boost_idx = 0,
 	.perf_constrain_idx = 0,
 	.prefer_idle = 0,
-	.prefer_iowait = 0,
 };
 
 int
@@ -301,7 +300,7 @@ schedtune_accept_deltas(int nrg_delta, int cap_delta,
  *    implementation especially for the computation of the per-CPU boost
  *    value
  */
-#define BOOSTGROUPS_COUNT 7
+#define BOOSTGROUPS_COUNT 5
 
 /* Array of configured boostgroups */
 static struct schedtune *allocated_group[BOOSTGROUPS_COUNT] = {
@@ -375,18 +374,9 @@ void restore_cgroup_boost_settings(void)
 
 bool task_sched_boost(struct task_struct *p)
 {
-	struct schedtune *st;
-	bool enabled;
+	struct schedtune *st = task_schedtune(p);
 
-	if (unlikely(!schedtune_initialized))
-		return false;
-
-	rcu_read_lock();
-	st = task_schedtune(p);
-	enabled = st->sched_boost_enabled;
-	rcu_read_unlock();
-
-	return enabled;
+	return st->sched_boost_enabled;
 }
 
 static u64
@@ -886,40 +876,6 @@ boost_write(struct cgroup_subsys_state *css, struct cftype *cft,
 	return 0;
 }
 
-int schedtune_prefer_iowait(struct task_struct *p)
-{
-	struct schedtune *st;
-	int prefer_iowait;
-
-	if (unlikely(!schedtune_initialized))
-		return 0;
-
-	/* Get prefer_iowait value */
-	rcu_read_lock();
-	st = task_schedtune(p);
-	prefer_iowait = st->prefer_iowait;
-	rcu_read_unlock();
-
-	return prefer_iowait;
-}
-
-static u64 prefer_iowait_read(struct cgroup_subsys_state *css,
-			struct cftype *cft)
-{
-	struct schedtune *st = css_st(css);
-
-	return st->prefer_iowait;
-}
-
-static int prefer_iowait_write(struct cgroup_subsys_state *css,
-			struct cftype *cft, u64 prefer_iowait)
-{
-	struct schedtune *st = css_st(css);
-
-	st->prefer_iowait = !!prefer_iowait;
-	return 0;
-}
-
 static struct cftype files[] = {
 #ifdef CONFIG_SCHED_WALT
 	{
@@ -947,11 +903,6 @@ static struct cftype files[] = {
 		.name = "prefer_idle",
 		.read_u64 = prefer_idle_read,
 		.write_u64 = prefer_idle_write,
-	},
-	{
-		.name = "prefer_iowait",
-		.read_u64 = prefer_iowait_read,
-		.write_u64 = prefer_iowait_write,
 	},
 	{ }	/* terminate */
 };

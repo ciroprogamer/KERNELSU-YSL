@@ -11,12 +11,9 @@
  */
 
 #include "sched.h"
-
-#ifdef CONFIG_SCHED_WALT
 #include <linux/of.h>
 #include <linux/sched/core_ctl.h>
 #include <trace/events/sched.h>
-#endif
 
 /*
  * Scheduler boost is a mechanism to temporarily place tasks on CPUs
@@ -26,9 +23,6 @@
  */
 
 unsigned int sysctl_sched_boost;
-extern unsigned int sysctl_sched_energy_aware;
-
-#ifdef CONFIG_SCHED_WALT
 static enum sched_boost_policy boost_policy;
 static enum sched_boost_policy boost_policy_dt = SCHED_BOOST_NONE;
 static DEFINE_MUTEX(boost_mutex);
@@ -38,7 +32,7 @@ static inline void boost_kick(int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
 
-	if (!test_and_set_bit(BOOST_KICK, &rq->extra_flags))
+	if (!test_and_set_bit(BOOST_KICK, &rq->walt_flags))
 		smp_send_reschedule(cpu);
 }
 
@@ -63,14 +57,14 @@ int got_boost_kick(void)
 	int cpu = smp_processor_id();
 	struct rq *rq = cpu_rq(cpu);
 
-	return test_bit(BOOST_KICK, &rq->extra_flags);
+	return test_bit(BOOST_KICK, &rq->walt_flags);
 }
 
 void clear_boost_kick(int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
 
-	clear_bit(BOOST_KICK, &rq->extra_flags);
+	clear_bit(BOOST_KICK, &rq->walt_flags);
 }
 
 /*
@@ -108,7 +102,6 @@ enum sched_boost_policy sched_boost_policy(void)
 {
 	return boost_policy;
 }
-#endif /* CONFIG_SCHED_WALT */
 
 static bool verify_boost_params(int old_val, int new_val)
 {
@@ -120,7 +113,6 @@ static bool verify_boost_params(int old_val, int new_val)
 	return !(!!old_val == !!new_val);
 }
 
-#ifdef CONFIG_SCHED_WALT
 static void _sched_set_boost(int old_val, int type)
 {
 	switch (type) {
@@ -190,7 +182,6 @@ int sched_set_boost(int type)
 	mutex_unlock(&boost_mutex);
 	return ret;
 }
-#endif /* CONFIG_SCHED_WALT */
 
 int sched_boost_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp,
@@ -200,9 +191,7 @@ int sched_boost_handler(struct ctl_table *table, int write,
 	unsigned int *data = (unsigned int *)table->data;
 	unsigned int old_val;
 
-#ifdef CONFIG_SCHED_WALT
 	mutex_lock(&boost_mutex);
-#endif
 
 	old_val = *data;
 	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
@@ -211,35 +200,18 @@ int sched_boost_handler(struct ctl_table *table, int write,
 		goto done;
 
 	if (verify_boost_params(old_val, *data)) {
-#ifdef CONFIG_SCHED_WALT
 		_sched_set_boost(old_val, *data);
-#else
-		if (*data == 1)
-			sysctl_sched_energy_aware = 0;
-		else
-			sysctl_sched_energy_aware = 1;
-#endif
 	} else {
-		/*
-		 * Only return error when switching from one boost type
-		 * to another.
-		 */
-		if (old_val != *data) {
-			*data = old_val;
-			ret = -EINVAL;
-		}
+		*data = old_val;
+		ret = -EINVAL;
 	}
 
 done:
-#ifdef CONFIG_SCHED_WALT
 	mutex_unlock(&boost_mutex);
-#endif
 	return ret;
 }
 
-#ifdef CONFIG_SCHED_WALT
 int sched_boost(void)
 {
 	return sysctl_sched_boost;
 }
-#endif

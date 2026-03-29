@@ -149,16 +149,12 @@ struct kgsl_driver {
 		atomic_long_t secure_max;
 		atomic_long_t mapped;
 		atomic_long_t mapped_max;
-		atomic_long_t page_free_pending;
-		atomic_long_t page_alloc_pending;
 	} stats;
 	unsigned int full_cache_threshold;
 	struct workqueue_struct *workqueue;
 	struct workqueue_struct *mem_workqueue;
 	struct kthread_worker worker;
-	struct kthread_worker low_prio_worker;
 	struct task_struct *worker_thread;
-	struct task_struct *low_prio_worker_thread;
 };
 
 extern struct kgsl_driver kgsl_driver;
@@ -295,14 +291,6 @@ struct kgsl_event_group;
 typedef void (*kgsl_event_func)(struct kgsl_device *, struct kgsl_event_group *,
 		void *, int);
 
-enum kgsl_priority {
-	KGSL_EVENT_REGULAR_PRIORITY = 0,
-	KGSL_EVENT_LOW_PRIORITY,
-	KGSL_EVENT_NUM_PRIORITIES
-};
-
-const char *prio_to_string(enum kgsl_priority prio);
-
 /**
  * struct kgsl_event - KGSL GPU timestamp event
  * @device: Pointer to the KGSL device that owns the event
@@ -324,9 +312,8 @@ struct kgsl_event {
 	void *priv;
 	struct list_head node;
 	unsigned int created;
-	struct kthread_work work;
+	struct work_struct work;
 	int result;
-	enum kgsl_priority prio;
 	struct kgsl_event_group *group;
 };
 
