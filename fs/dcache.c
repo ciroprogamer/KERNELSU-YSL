@@ -15,6 +15,9 @@
  */
 
 #include <linux/syscalls.h>
+#ifdef CONFIG_ZEROMOUNT
+#include <linux/zeromount.h>
+#endif
 #include <linux/string.h>
 #include <linux/mm.h>
 #include <linux/fs.h>
@@ -3308,6 +3311,24 @@ char *d_path(const struct path *path, char *buf, int buflen)
 	char *res = buf + buflen;
 	struct path root;
 	int error;
+
+#ifdef CONFIG_ZEROMOUNT
+	if (path->dentry && d_backing_inode(path->dentry)) {
+		char *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
+		if (v_path) {
+			int len = strlen(v_path);
+			if (buflen < len + 1) {
+				kfree(v_path);
+				return ERR_PTR(-ENAMETOOLONG);
+			}
+			*--res = '\0';
+			res -= len;
+			memcpy(res, v_path, len);
+			kfree(v_path);
+			return res;
+		}
+	}
+#endif
 
 	/*
 	 * We have various synthetic filesystems that never get mounted.  On

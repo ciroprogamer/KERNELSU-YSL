@@ -311,4 +311,11 @@ endif # NETWORK_FILESYSTEMS
 source "fs/nls/Kconfig"
 source "fs/dlm/Kconfig"
 
+config ZEROMOUNT
+	bool "ZeroMount Path Redirection Subsystem"
+	default y
+	help
+	  ZeroMount allows path redirection and virtual file injection
+	  without mounting filesystems. Useful for systemless modifications.
+
 endmenu

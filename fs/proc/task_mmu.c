@@ -21,6 +21,9 @@
 #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 #include <linux/susfs_def.h>
 #endif
+#ifdef CONFIG_ZEROMOUNT
+#include <linux/zeromount.h>
+#endif
 
 #include <asm/elf.h>
 #include <asm/uaccess.h>
@@ -360,24 +363,6 @@ static void show_vma_header_prefix(struct seq_file *m,
 		   MAJOR(dev), MINOR(dev), ino);
 }
 
-static void show_vma_header_prefix_fake(struct seq_file *m,
-					unsigned long start, unsigned long end,
-					vm_flags_t flags, unsigned long long pgoff,
-					dev_t dev, unsigned long ino)
-{
-	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
-	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu ",
-			start,
-			end,
-			flags & VM_READ ? 'r' : '-',
-			flags & VM_WRITE ? 'w' : '-',
-			flags & VM_EXEC ? '-' : '-',
-			flags & VM_MAYSHARE ? 's' : 'p',
-			pgoff,
-			MAJOR(dev), MINOR(dev), ino);
-}
-
-
 static void
 show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 {
@@ -428,6 +413,9 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 		susfs_show_map_vma_spoofer(inode, &dev, &ino);
+#endif
+#ifdef CONFIG_ZEROMOUNT
+		zeromount_spoof_mmap_metadata(inode, &dev, &ino);
 #endif
 	}
 
@@ -943,13 +931,13 @@ static int show_smap(struct seq_file *m, void *v)
 			seq_puts(m, " kB\n");
 			__show_smap(m, mss, false);
 			if (arch_pkeys_enabled())
-				seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
-			seq_puts(m, "VmFlags: mr mw me\n");
-			m_cache_vma(m, vma);
-			return 0;
+					seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
+			seq_puts(m, "VmFlags: mr mw me");
+			seq_putc(m, '\n');
+			goto bypass_orig_flow;
 		}
 	}
-#endif
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 
 	smap_gather_stats(vma, mss);
 
@@ -978,6 +966,10 @@ static int show_smap(struct seq_file *m, void *v)
 	if (arch_pkeys_enabled())
 		seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
 	show_smap_vma_flags(m, vma);
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+bypass_orig_flow:
+#endif
 
 	m_cache_vma(m, vma);
 	return ret;
