@@ -2018,7 +2018,7 @@ static bool can_steal_fallback(unsigned int current_order, unsigned int start_or
 	        /* reclaimable can steal aggressively */
 		start_mt == MIGRATE_RECLAIMABLE ||
 		/* allow unmovable allocs up to 64K without migrating blocks */
-		(start_mt == MIGRATE_UNMOVABLE && start_order >= 5) ||
+		(start_mt == MIGRATE_UNMOVABLE && current_order >= 5) ||
 		page_group_by_mobility_disabled)
 		return true;
 
@@ -3187,7 +3187,6 @@ static unsigned int calculate_safe_order(unsigned int requested_order,
 			        absolute_max_order,
 			        (PAGE_SIZE << absolute_max_order) >> 20);
 			pr_warn("  Process: %s (pid %d)\n", current->comm, current->pid);
-			dump_stack();
 		}
 		
 		return absolute_max_order;
@@ -3205,8 +3204,11 @@ static unsigned int calculate_safe_order(unsigned int requested_order,
 	safe_pages = (available_pages * max_alloc_percent) / 100;
 	
 	/* DMA allocations can use more (double the percentage) */
-	if (is_dma)
-		safe_pages = min(safe_pages * 2, 1UL << absolute_max_order);
+	if (is_dma) {
+		unsigned long dma_cap = 1UL << absolute_max_order;
+		/* Overflow-safe doubling: cap before multiplying */
+		safe_pages = (safe_pages <= dma_cap / 2) ? safe_pages * 2 : dma_cap;
+	}
 	
 	/* Ensure we don't exceed absolute maximum */
 	safe_pages = min(safe_pages, 1UL << absolute_max_order);
@@ -3215,7 +3217,9 @@ static unsigned int calculate_safe_order(unsigned int requested_order,
 	if (requested_pages <= safe_pages)
 		return requested_order;
 	
-	/* Calculate safe order */
+	/* Calculate safe order - guard against zero pages */
+	if (safe_pages == 0)
+		safe_pages = 1;
 	safe_order = min_t(unsigned int, get_order(safe_pages << PAGE_SHIFT), 
 	                   absolute_max_order);
 	
@@ -3252,8 +3256,8 @@ static inline bool should_block_alloc(unsigned int order, gfp_t gfp_mask)
 	max_order = (gfp_mask & (__GFP_DMA | __GFP_DMA32)) ? 
 	            dma_max_alloc_order : max_alloc_order;
 	
-	/* Block if significantly over limit (2x the max) */
-	if (order > (max_order + 1)) {
+	/* Block if over the absolute limit - no grace window */
+	if (order > max_order) {
 		atomic_long_inc(&blocked_allocs);
 		
 		if (__ratelimit(&alloc_limit_rs)) {
@@ -3262,7 +3266,6 @@ static inline bool should_block_alloc(unsigned int order, gfp_t gfp_mask)
 			pr_err("  Maximum allowed: order-%u (%lu MB)\n",
 			       max_order, (PAGE_SIZE << max_order) >> 20);
 			pr_err("  Process: %s (pid %d)\n", current->comm, current->pid);
-			dump_stack();
 		}
 		
 		return true;
@@ -4074,8 +4077,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 			struct zonelist *zonelist, nodemask_t *nodemask)
 {
 	struct page *page;
-	unsigned int original_order = order;
-	bool was_clamped = false;
+	bool was_clamped;
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
 	gfp_t alloc_mask = gfp_mask; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = {
@@ -4088,12 +4090,9 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 	/* Check and potentially clamp allocation size */
 	if (should_block_alloc(order, gfp_mask))
 		return NULL;
-	
+
 	order = calculate_safe_order(order, gfp_mask, &was_clamped);
-	
-	/* Update migratetype if order changed */
-	if (was_clamped)
-		ac.migratetype = gfpflags_to_migratetype(gfp_mask);
+	/* migratetype is order-independent (derived from gfp_mask only), no update needed */
 
 
 	if (cpusets_enabled()) {
@@ -6902,9 +6901,13 @@ static int page_alloc_cpu_notify(struct notifier_block *self,
 	return NOTIFY_OK;
 }
 
+/* Forward declaration - table defined after its handlers below */
+static struct ctl_table alloc_limit_table[];
+
 void __init page_alloc_init(void)
 {
 	hotcpu_notifier(page_alloc_cpu_notify, 0);
+	register_sysctl("vm", alloc_limit_table);
 }
 
 /*
@@ -7266,7 +7269,13 @@ static int alloc_limit_stats_handler(struct ctl_table *table, int write,
 	              max_alloc_percent,
 	              dynamic_alloc_limit ? "yes" : "no");
 	
-	return simple_read_from_buffer(buffer, *length, ppos, buf, len);
+	{
+		ssize_t n = simple_read_from_buffer(buffer, *length, ppos, buf, len);
+		if (n < 0)
+			return (int)n;
+		*length = (size_t)n;
+		return 0;
+	}
 }
 
 static struct ctl_table alloc_limit_table[] = {
