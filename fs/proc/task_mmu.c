@@ -21,9 +21,6 @@
 #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 #include <linux/susfs_def.h>
 #endif
-#ifdef CONFIG_ZEROMOUNT
-#include <linux/zeromount.h>
-#endif
 
 #include <asm/elf.h>
 #include <asm/uaccess.h>
@@ -413,9 +410,6 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 		susfs_show_map_vma_spoofer(inode, &dev, &ino);
-#endif
-#ifdef CONFIG_ZEROMOUNT
-		zeromount_spoof_mmap_metadata(inode, &dev, &ino);
 #endif
 	}
 
