@@ -21,6 +21,10 @@
 #include <linux/compat.h>
 
 #include <asm/uaccess.h>
+#ifdef CONFIG_NOMOUNT
+extern int nomount_handle_iterate_dir(struct file *file, struct dir_context *ctx);
+#endif
+
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 #include <linux/susfs_def.h>
@@ -52,10 +56,14 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
 	if (!IS_DEADDIR(inode)) {
 		ctx->pos = file->f_pos;
 		ctx->romnt = (inode->i_sb->s_flags & MS_RDONLY);
+#ifdef CONFIG_NOMOUNT
+		res = nomount_handle_iterate_dir(file, ctx);
+#else
 		if (shared)
 			res = file->f_op->iterate_shared(file, ctx);
 		else
 			res = file->f_op->iterate(file, ctx);
+#endif
 		file->f_pos = ctx->pos;
 		fsnotify_access(file);
 		file_accessed(file);

@@ -93,6 +93,10 @@ int vfs_getattr_nosec(struct path *path, struct kstat *stat)
 
 EXPORT_SYMBOL(vfs_getattr_nosec);
 
+#ifdef CONFIG_NOMOUNT
+extern int nomount_handle_getattr(int ret, const struct path *path, struct kstat *stat);
+#endif
+
 int vfs_getattr(struct path *path, struct kstat *stat)
 {
 	int retval;
@@ -100,7 +104,11 @@ int vfs_getattr(struct path *path, struct kstat *stat)
 	retval = security_inode_getattr(path);
 	if (retval)
 		return retval;
+#ifdef CONFIG_NOMOUNT
+	return nomount_handle_getattr(vfs_getattr_nosec(path, stat), path, stat);
+#else
 	return vfs_getattr_nosec(path, stat);
+#endif
 }
 
 EXPORT_SYMBOL(vfs_getattr);
